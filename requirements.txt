@@ -1,0 +1,19 @@
+# E-Fatura Yönetim Sistemi - Gerekli Paketler
+
+# Web Dashboard
+Flask>=3.0.0
+
+# Excel İşlemleri
+openpyxl>=3.1.0
+pandas>=2.0.0
+xlsxwriter>=3.1.0
+
+# API ve Web İstekleri
+requests>=2.31.0
+
+# Veri İşleme
+lxml>=4.9.0
+
+# Güvenlik (şifre girişi)
+# (getpass standart kütüphanede mevcut)
+

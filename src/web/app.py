@@ -301,17 +301,27 @@ def get_data():
     desp = cursor.fetchone()
     
     # Firma bazlı sayılar
-    cursor.execute("SELECT COUNT(*) FROM invoices WHERE firma_kodu = 'A'")
-    ak_count = cursor.fetchone()[0] if 'firma_kodu' in [desc[0] for desc in cursor.execute("PRAGMA table_info(invoices)")] else 0
+    # Önce firma_kodu sütununun varlığını kontrol et
+    cursor.execute("PRAGMA table_info(invoices)")
+    columns = [desc[1] for desc in cursor.fetchall()]
+    has_firma_kodu = 'firma_kodu' in columns
     
-    cursor.execute("SELECT COUNT(*) FROM invoices WHERE firma_kodu = 'F'")
-    fb_count = cursor.fetchone()[0] if 'firma_kodu' in [desc[0] for desc in cursor.execute("PRAGMA table_info(invoices)")] else 0
-    
-    cursor.execute("SELECT COUNT(*) FROM invoices WHERE firma_kodu = 'API'")
-    api_count = cursor.fetchone()[0] if 'firma_kodu' in [desc[0] for desc in cursor.execute("PRAGMA table_info(invoices)")] else 0
+    if has_firma_kodu:
+        cursor.execute("SELECT COUNT(*) FROM invoices WHERE firma_kodu = 'A'")
+        ak_count = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM invoices WHERE firma_kodu = 'F'")
+        fb_count = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM invoices WHERE firma_kodu = 'API'")
+        api_count = cursor.fetchone()[0]
+    else:
+        ak_count = 0
+        fb_count = 0
+        api_count = 0
     
     # Fatura listesi
-    if 'firma_kodu' in [desc[0] for desc in cursor.execute("PRAGMA table_info(invoices)")]:
+    if has_firma_kodu:
         # Birleşik DB - firma_kodu ile
         cursor.execute("""
             SELECT 
