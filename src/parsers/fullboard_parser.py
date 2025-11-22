@@ -164,12 +164,15 @@ def parse_xml_invoice(xml_file):
                 despatch_data['despatch_id_full'] = full_id
                 
                 # FULLBOARD için: F- + son 5 hane (örn: IRS2025000014704 -> F-14704)
+                # Başındaki 0'ları kaldır (F-07128 -> F-7128)
                 if full_id.startswith('IRS') and len(full_id) > 8:
-                    # F- öneki + son 5 hane
-                    despatch_data['despatch_id_short'] = 'F-' + full_id[-5:]
+                    # F- öneki + son 5 hane (başındaki 0'lar kaldırılır)
+                    number = full_id[-5:].lstrip('0') or '0'  # Tüm 0'lar silinirse '0' kalsın
+                    despatch_data['despatch_id_short'] = 'F-' + number
                 else:
                     # IRS ile başlamıyorsa veya çok kısaysa, F- ekle
-                    despatch_data['despatch_id_short'] = 'F-' + full_id[-5:] if len(full_id) >= 5 else 'F-' + full_id
+                    number = (full_id[-5:] if len(full_id) >= 5 else full_id).lstrip('0') or '0'
+                    despatch_data['despatch_id_short'] = 'F-' + number
             
             # İrsaliye tarihi
             despatch_date = despatch.find('.//cbc:IssueDate', NAMESPACES)

@@ -113,8 +113,12 @@ class IsbasiAPIDataExtractor:
             'delay_between_requests': 0.5
         }
         
+        # Fatura numarası filtresi
+        self.min_invoice_number = "DKE2025000000790"  # Bu numaradan itibaren çekilecek
+        
         logger.info("API Data Extractor başlatıldı")
         logger.info(f"Hedef veritabanı: {self.db_path}")
+        logger.info(f"Fatura filtresi: >= {self.min_invoice_number}")
     
     @staticmethod
     def clean_bank_info_from_description(description: str) -> str:
@@ -237,13 +241,14 @@ class IsbasiAPIDataExtractor:
             # Güvenlik: Şifreyi bellekten temizle
             self.password = None
     
-    def fetch_data_with_pagination(self, endpoint: str, data_type: str) -> Tuple[bool, List[Dict]]:
+    def fetch_data_with_pagination(self, endpoint: str, data_type: str, min_invoice_number: str = None) -> Tuple[bool, List[Dict]]:
         """
         Sayfalama ile veri çeker
         
         Args:
             endpoint: API endpoint'i
             data_type: Veri türü (customers, invoices, products)
+            min_invoice_number: Minimum fatura numarası (bu numaradan itibaren çeker)
             
         Returns:
             Tuple[bool, List[Dict]]: (başarı durumu, veri listesi)
@@ -252,13 +257,25 @@ class IsbasiAPIDataExtractor:
         page = 1
         total_pages = 0
         
-        print(f"📊 {data_type.upper()} verileri çekiliyor...")
+        if min_invoice_number:
+            print(f"📊 {data_type.upper()} verileri çekiliyor (>= {min_invoice_number})...")
+        else:
+            print(f"📊 {data_type.upper()} verileri çekiliyor...")
         
         try:
             while page <= self.pagination_config['max_pages']:
+                # Filtreler - fatura numarasına göre
+                filters = []
+                if min_invoice_number and data_type in ['all_invoices', 'invoices']:
+                    filters.append({
+                        "field": "invoiceNumber",
+                        "operator": "gte",
+                        "value": min_invoice_number
+                    })
+                
                 # GİB API yapısına uygun format
                 payload = {
-                        "filters": [],
+                        "filters": filters,
                         "sorting": {},
                         "paging": {
                             "currentPage": page,
@@ -334,7 +351,8 @@ class IsbasiAPIDataExtractor:
         """Tüm faturaları çeker (giden ve gelen)"""
         success, invoices_data = self.fetch_data_with_pagination(
             self.endpoints['invoices'], 
-            'all_invoices'
+            'all_invoices',
+            min_invoice_number=self.min_invoice_number
         )
         
         if success and invoices_data:

@@ -1,0 +1,407 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Fatura Eşleştirme Aracı
+========================
+
+API'den gönderilen faturaların description alanından irsaliye kodlarını çıkarıp,
+ilgili veritabanlarında (akgips.db veya fullboard.db) eşleşen fatura bilgilerini
+bulan ve Excel raporuna yazan araç.
+
+Kullanım:
+    python3 tools/invoice_matcher.py
+"""
+
+import pandas as pd
+import sqlite3
+import re
+from pathlib import Path
+from datetime import datetime
+import logging
+
+# Logging ayarları
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+class InvoiceMatcher:
+    """
+    Giden faturalardan irsaliye kodlarını çıkarıp,
+    gelen faturalarla eşleştiren sınıf
+    """
+    
+    def __init__(self):
+        """Matcher sınıfını başlatır"""
+        # Proje kök dizini
+        self.project_root = Path(__file__).resolve().parent.parent
+        
+        # Dosya yolları
+        self.api_excel = self.project_root / "data" / "excel" / "api" / "API_Giden_Faturalar.xlsx"
+        self.akgips_db = self.project_root / "data" / "db" / "akgips.db"
+        self.fullboard_db = self.project_root / "data" / "db" / "fullboard.db"
+        
+        # Çıktı klasörü
+        self.output_dir = self.project_root / "kayıtlar"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # İrsaliye kodu regex pattern'i
+        # A- veya F- ile başlayan 4-5 haneli kodları yakalar
+        # Desteklenen formatlar:
+        #   - F-9171, A-18356 (standart)
+        #   - F-9170 / F-9189 (çoklu, / ile ayrılmış)
+        #   - F/9099 (/ ile birleşik)
+        #   - F- 9026 (boşluklu)
+        # Prefix olmayan kodlar atlanır (örn: İRSALİYE NO: 18277)
+        self.irsaliye_pattern = r'([AF])\s*[-/]\s*(\d{4,5})'
+        
+        logger.info("Invoice Matcher başlatıldı")
+        logger.info(f"API Excel: {self.api_excel}")
+        logger.info(f"AkGips DB: {self.akgips_db}")
+        logger.info(f"Fullboard DB: {self.fullboard_db}")
+    
+    def extract_irsaliye_codes(self, description: str) -> list:
+        """
+        Description alanından irsaliye kodlarını çıkarır
+        
+        Desteklenen formatlar:
+        - İRSALİYE NO: F-9171 ( İSTANBUL )
+        - İRSALİYE NO: A-18356 ( ALTINOVA )
+        - İRSALİYE NO: F-9170 / F-9189 (çoklu, / ile ayrılmış)
+        - İRSALİYE NO:F/9099/F-9098 (/ ile birleşik)
+        - İRSALİYE NO: F- 9026 (boşluklu)
+        
+        Prefix olmayan kodlar atlanır:
+        - İRSALİYE NO: 18277 → ATLANIR
+        
+        Args:
+            description: Açıklama metni
+            
+        Returns:
+            List[tuple]: [(prefix, number), ...] formatında irsaliye kodları
+            Örnek: [('A', '18356'), ('F', '9197')]
+        """
+        if not description or pd.isna(description):
+            return []
+        
+        # Description'ı string'e çevir ve büyük harfe çevir (case-insensitive)
+        desc = str(description).upper()
+        
+        # Tüm eşleşmeleri bul (A-XXXX veya F-XXXX formatında)
+        # Pattern: ([AF])\s*[-/]\s*(\d{4,5})
+        # A veya F, sonra - veya / (boşluklarla), sonra 4-5 haneli numara
+        matches = re.findall(self.irsaliye_pattern, desc)
+        
+        # Unique yapıp döndür
+        return list(set(matches))
+    
+    def search_in_database(self, irsaliye_code: str, db_path: Path) -> dict:
+        """
+        Veritabanında irsaliye koduna göre fatura arar
+        
+        Args:
+            irsaliye_code: İrsaliye kodu (örn: 'A-18356')
+            db_path: Veritabanı dosya yolu
+            
+        Returns:
+            dict: {'invoice_number': '...', 'total_amount': ..., 'found': True/False}
+        """
+        result = {
+            'invoice_number': None,
+            'total_amount': None,
+            'found': False
+        }
+        
+        if not db_path.exists():
+            logger.warning(f"Veritabanı bulunamadı: {db_path}")
+            return result
+        
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            # İrsaliye koduna göre fatura bilgilerini çek
+            query = """
+                SELECT i.invoice_number, i.total_amount 
+                FROM despatch_documents d 
+                JOIN invoices i ON d.invoice_id = i.id 
+                WHERE d.despatch_id_short = ?
+                LIMIT 1
+            """
+            
+            cursor.execute(query, (irsaliye_code,))
+            row = cursor.fetchone()
+            
+            if row:
+                result['invoice_number'] = row[0]
+                result['total_amount'] = row[1]
+                result['found'] = True
+                logger.debug(f"Eşleşme bulundu: {irsaliye_code} -> {row[0]}")
+            else:
+                logger.debug(f"Eşleşme bulunamadı: {irsaliye_code}")
+            
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Veritabanı hatası ({db_path}): {e}")
+        
+        return result
+    
+    def process_api_invoices(self) -> pd.DataFrame:
+        """
+        API Excel dosyasını okur ve her fatura için eşleşme arar
+        
+        Returns:
+            pd.DataFrame: Eşleştirme sonuçları
+        """
+        logger.info("API fatura dosyası okunuyor...")
+        
+        # Excel dosyasını oku
+        df = pd.read_excel(self.api_excel)
+        
+        logger.info(f"Toplam {len(df)} fatura bulundu")
+        
+        # Sonuç listesi
+        results = []
+        
+        for idx, row in df.iterrows():
+            giden_fatura_no = row.get('invoiceNumber', '')
+            giden_tutar = row.get('totalTL', 0)
+            description = row.get('description', '')
+            
+            # Description'dan irsaliye kodlarını çıkar
+            irsaliye_codes = self.extract_irsaliye_codes(description)
+            
+            if not irsaliye_codes:
+                # İrsaliye kodu bulunamadı
+                results.append({
+                    'Giden_Fatura_No': giden_fatura_no,
+                    'Giden_Tutar_TL': giden_tutar,
+                    'Irsaliye_Kodu': 'Bulunamadı',
+                    'Firma': '-',
+                    'Gelen_Fatura_No': '-',
+                    'Gelen_Tutar_TL': 0,
+                    'Durum': 'İrsaliye kodu yok ⚠'
+                })
+                continue
+            
+            # Her irsaliye kodu için arama yap
+            for prefix, number in irsaliye_codes:
+                irsaliye_code = f"{prefix}-{number}"
+                
+                # Firma ve veritabanını belirle
+                if prefix == 'A':
+                    firma = 'AK GİPS'
+                    db_path = self.akgips_db
+                elif prefix == 'F':
+                    firma = 'FULLBOARD'
+                    db_path = self.fullboard_db
+                else:
+                    continue
+                
+                # Veritabanında ara
+                search_result = self.search_in_database(irsaliye_code, db_path)
+                
+                if search_result['found']:
+                    durum = 'Eşleşti ✓'
+                    gelen_fatura_no = search_result['invoice_number']
+                    gelen_tutar = search_result['total_amount']
+                else:
+                    durum = 'Bulunamadı ✗'
+                    gelen_fatura_no = '-'
+                    gelen_tutar = 0
+                
+                results.append({
+                    'Giden_Fatura_No': giden_fatura_no,
+                    'Giden_Tutar_TL': giden_tutar,
+                    'Irsaliye_Kodu': irsaliye_code,
+                    'Firma': firma,
+                    'Gelen_Fatura_No': gelen_fatura_no,
+                    'Gelen_Tutar_TL': gelen_tutar,
+                    'Durum': durum
+                })
+        
+        # DataFrame'e çevir
+        results_df = pd.DataFrame(results)
+        
+        logger.info(f"İşlem tamamlandı: {len(results)} kayıt")
+        
+        return results_df
+    
+    def generate_excel_report(self, df: pd.DataFrame) -> Path:
+        """
+        Eşleştirme sonuçlarını Excel raporuna yazar
+        
+        Args:
+            df: Sonuç DataFrame'i
+            
+        Returns:
+            Path: Oluşturulan Excel dosyasının yolu
+        """
+        # NaN değerlerini temizle
+        df = df.fillna({
+            'Giden_Fatura_No': '',
+            'Giden_Tutar_TL': 0,
+            'Irsaliye_Kodu': '',
+            'Firma': '-',
+            'Gelen_Fatura_No': '-',
+            'Gelen_Tutar_TL': 0,
+            'Durum': ''
+        })
+        
+        # Dosya adı (timestamp ile)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = self.output_dir / f"Fatura_Eslesme_Raporu_{timestamp}.xlsx"
+        
+        logger.info(f"Excel raporu oluşturuluyor: {output_file}")
+        
+        # Excel'e yaz
+        with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Eşleştirme Sonuçları')
+            
+            # Workbook ve worksheet al
+            workbook = writer.book
+            worksheet = writer.sheets['Eşleştirme Sonuçları']
+            
+            # Formatlar
+            header_format = workbook.add_format({
+                'bold': True,
+                'fg_color': '#4472C4',
+                'font_color': 'white',
+                'border': 1,
+                'align': 'center',
+                'valign': 'vcenter'
+            })
+            
+            currency_format = workbook.add_format({
+                'num_format': '#,##0.00 ₺',
+                'border': 1
+            })
+            
+            center_format = workbook.add_format({
+                'align': 'center',
+                'border': 1
+            })
+            
+            success_format = workbook.add_format({
+                'bg_color': '#C6EFCE',
+                'border': 1
+            })
+            
+            warning_format = workbook.add_format({
+                'bg_color': '#FFEB9C',
+                'border': 1
+            })
+            
+            error_format = workbook.add_format({
+                'bg_color': '#FFC7CE',
+                'border': 1
+            })
+            
+            # Header formatını uygula
+            for col_num, value in enumerate(df.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+            
+            # Sütun genişliklerini ayarla
+            worksheet.set_column('A:A', 20)  # Giden_Fatura_No
+            worksheet.set_column('B:B', 18)  # Giden_Tutar_TL
+            worksheet.set_column('C:C', 18)  # Irsaliye_Kodu
+            worksheet.set_column('D:D', 15)  # Firma
+            worksheet.set_column('E:E', 20)  # Gelen_Fatura_No
+            worksheet.set_column('F:F', 18)  # Gelen_Tutar_TL
+            worksheet.set_column('G:G', 20)  # Durum
+            
+            # Para birimi formatını uygula
+            for row_num in range(1, len(df) + 1):
+                worksheet.write(row_num, 1, df.iloc[row_num - 1]['Giden_Tutar_TL'], currency_format)
+                worksheet.write(row_num, 5, df.iloc[row_num - 1]['Gelen_Tutar_TL'], currency_format)
+            
+            # Durum sütununa göre satır renklendirme
+            for row_num in range(1, len(df) + 1):
+                durum = df.iloc[row_num - 1]['Durum']
+                
+                if 'Eşleşti' in durum:
+                    row_format = success_format
+                elif 'İrsaliye kodu yok' in durum:
+                    row_format = warning_format
+                else:
+                    row_format = error_format
+                
+                # Sadece durum sütununu renklendir
+                worksheet.write(row_num, 6, durum, row_format)
+            
+            # İstatistikler ekle
+            last_row = len(df) + 3
+            
+            eslesme_sayisi = len(df[df['Durum'].str.contains('Eşleşti', na=False)])
+            bulunamayan_sayisi = len(df[df['Durum'].str.contains('Bulunamadı', na=False)])
+            irsaliye_yok_sayisi = len(df[df['Durum'].str.contains('İrsaliye kodu yok', na=False)])
+            
+            worksheet.write(last_row, 0, '📊 İSTATİSTİKLER', header_format)
+            worksheet.write(last_row + 1, 0, f'✓ Eşleşen: {eslesme_sayisi}', success_format)
+            worksheet.write(last_row + 2, 0, f'✗ Bulunamayan: {bulunamayan_sayisi}', error_format)
+            worksheet.write(last_row + 3, 0, f'⚠ İrsaliye kodu yok: {irsaliye_yok_sayisi}', warning_format)
+            worksheet.write(last_row + 4, 0, f'📝 Toplam: {len(df)}', header_format)
+        
+        logger.info(f"✅ Excel raporu oluşturuldu: {output_file}")
+        
+        return output_file
+    
+    def run(self) -> Path:
+        """
+        Tam eşleştirme işlemini çalıştırır
+        
+        Returns:
+            Path: Oluşturulan Excel dosyasının yolu
+        """
+        print("=" * 70)
+        print("🔍 FATURA EŞLEŞTIRME ARACI")
+        print("=" * 70)
+        print()
+        
+        # Dosya kontrolü
+        if not self.api_excel.exists():
+            logger.error(f"❌ API Excel dosyası bulunamadı: {self.api_excel}")
+            return None
+        
+        if not self.akgips_db.exists():
+            logger.warning(f"⚠️ AkGips veritabanı bulunamadı: {self.akgips_db}")
+        
+        if not self.fullboard_db.exists():
+            logger.warning(f"⚠️ Fullboard veritabanı bulunamadı: {self.fullboard_db}")
+        
+        print("📊 Giden faturalar işleniyor...")
+        results_df = self.process_api_invoices()
+        
+        print()
+        print("📈 İstatistikler:")
+        print(f"   ✓ Eşleşen: {len(results_df[results_df['Durum'].str.contains('Eşleşti', na=False)])}")
+        print(f"   ✗ Bulunamayan: {len(results_df[results_df['Durum'].str.contains('Bulunamadı', na=False)])}")
+        print(f"   ⚠ İrsaliye kodu yok: {len(results_df[results_df['Durum'].str.contains('İrsaliye kodu yok', na=False)])}")
+        print(f"   📝 Toplam: {len(results_df)}")
+        print()
+        
+        print("📝 Excel raporu oluşturuluyor...")
+        output_file = self.generate_excel_report(results_df)
+        
+        print()
+        print("=" * 70)
+        print("✅ İŞLEM TAMAMLANDI")
+        print("=" * 70)
+        print(f"📄 Rapor: {output_file}")
+        print()
+        
+        return output_file
+
+
+def main():
+    """Ana fonksiyon"""
+    matcher = InvoiceMatcher()
+    matcher.run()
+
+
+if __name__ == '__main__':
+    main()
+
