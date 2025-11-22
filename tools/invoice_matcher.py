@@ -183,6 +183,9 @@ class InvoiceMatcher:
                     'Firma': '-',
                     'Gelen_Fatura_No': '-',
                     'Gelen_Tutar_TL': 0,
+                    'Fark_TL': 0,
+                    'KDV_20_TL': 0,
+                    'Fark_KDV_Dusulmus_TL': 0,
                     'Durum': 'İrsaliye kodu yok ⚠'
                 })
                 continue
@@ -220,6 +223,11 @@ class InvoiceMatcher:
                     gelen_fatura_no = '-'
                     gelen_tutar = 0
                 
+                # Fark hesaplaması
+                fark = ortalama_tutar - gelen_tutar if search_result['found'] else 0
+                kdv_20 = fark * 0.20  # %20 KDV
+                fark_kdv_dusulmus = fark - kdv_20  # KDV düşülmüş fark
+                
                 results.append({
                     'Giden_Fatura_No': giden_fatura_no + coklu_irsaliye_isareti,  # İşaret ekle
                     'Giden_Tutar_TL': ortalama_tutar,  # Ortalama tutar kullan
@@ -227,6 +235,9 @@ class InvoiceMatcher:
                     'Firma': firma,
                     'Gelen_Fatura_No': gelen_fatura_no,
                     'Gelen_Tutar_TL': gelen_tutar,
+                    'Fark_TL': fark,
+                    'KDV_20_TL': kdv_20,
+                    'Fark_KDV_Dusulmus_TL': fark_kdv_dusulmus,
                     'Durum': durum
                 })
         
@@ -255,6 +266,9 @@ class InvoiceMatcher:
             'Firma': '-',
             'Gelen_Fatura_No': '-',
             'Gelen_Tutar_TL': 0,
+            'Fark_TL': 0,
+            'KDV_20_TL': 0,
+            'Fark_KDV_Dusulmus_TL': 0,
             'Durum': ''
         })
         
@@ -320,18 +334,24 @@ class InvoiceMatcher:
                 worksheet.write(0, col_num, value, header_format)
             
             # Sütun genişliklerini ayarla
-            worksheet.set_column('A:A', 20)  # Giden_Fatura_No
+            worksheet.set_column('A:A', 25)  # Giden_Fatura_No
             worksheet.set_column('B:B', 18)  # Giden_Tutar_TL
             worksheet.set_column('C:C', 18)  # Irsaliye_Kodu
             worksheet.set_column('D:D', 15)  # Firma
             worksheet.set_column('E:E', 20)  # Gelen_Fatura_No
             worksheet.set_column('F:F', 18)  # Gelen_Tutar_TL
-            worksheet.set_column('G:G', 20)  # Durum
+            worksheet.set_column('G:G', 18)  # Fark_TL
+            worksheet.set_column('H:H', 18)  # KDV_20_TL
+            worksheet.set_column('I:I', 20)  # Fark_KDV_Dusulmus_TL
+            worksheet.set_column('J:J', 20)  # Durum
             
             # Para birimi formatını uygula
             for row_num in range(1, len(df) + 1):
                 worksheet.write(row_num, 1, df.iloc[row_num - 1]['Giden_Tutar_TL'], currency_format)
                 worksheet.write(row_num, 5, df.iloc[row_num - 1]['Gelen_Tutar_TL'], currency_format)
+                worksheet.write(row_num, 6, df.iloc[row_num - 1]['Fark_TL'], currency_format)
+                worksheet.write(row_num, 7, df.iloc[row_num - 1]['KDV_20_TL'], currency_format)
+                worksheet.write(row_num, 8, df.iloc[row_num - 1]['Fark_KDV_Dusulmus_TL'], currency_format)
             
             # Durum sütununa göre satır renklendirme
             for row_num in range(1, len(df) + 1):
@@ -344,8 +364,8 @@ class InvoiceMatcher:
                 else:
                     row_format = error_format
                 
-                # Sadece durum sütununu renklendir
-                worksheet.write(row_num, 6, durum, row_format)
+                # Sadece durum sütununu renklendir (J sütunu - 9. index)
+                worksheet.write(row_num, 9, durum, row_format)
             
             # İstatistikler ekle
             last_row = len(df) + 3
