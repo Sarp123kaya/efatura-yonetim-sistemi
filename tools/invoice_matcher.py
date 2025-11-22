@@ -191,6 +191,9 @@ class InvoiceMatcher:
             irsaliye_sayisi = len(irsaliye_codes)
             ortalama_tutar = giden_tutar / irsaliye_sayisi if irsaliye_sayisi > 0 else giden_tutar
             
+            # Çoklu irsaliye işareti
+            coklu_irsaliye_isareti = f" (÷{irsaliye_sayisi})" if irsaliye_sayisi > 1 else ""
+            
             # Her irsaliye kodu için arama yap
             for prefix, number in irsaliye_codes:
                 irsaliye_code = f"{prefix}-{number}"
@@ -218,7 +221,7 @@ class InvoiceMatcher:
                     gelen_tutar = 0
                 
                 results.append({
-                    'Giden_Fatura_No': giden_fatura_no,
+                    'Giden_Fatura_No': giden_fatura_no + coklu_irsaliye_isareti,  # İşaret ekle
                     'Giden_Tutar_TL': ortalama_tutar,  # Ortalama tutar kullan
                     'Irsaliye_Kodu': irsaliye_code,
                     'Firma': firma,
