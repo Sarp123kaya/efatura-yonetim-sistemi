@@ -100,18 +100,20 @@ class InvoiceMatcher:
     def search_in_database(self, irsaliye_code: str, db_path: Path) -> dict:
         """
         Veritabanında irsaliye koduna göre fatura arar
+        Gelen faturada birden fazla irsaliye varsa tutarı bölüştürür
         
         Args:
             irsaliye_code: İrsaliye kodu (örn: 'A-18356')
             db_path: Veritabanı dosya yolu
             
         Returns:
-            dict: {'invoice_number': '...', 'total_amount': ..., 'found': True/False}
+            dict: {'invoice_number': '...', 'total_amount': ..., 'found': True/False, 'irsaliye_count': N}
         """
         result = {
             'invoice_number': None,
             'total_amount': None,
-            'found': False
+            'found': False,
+            'irsaliye_count': 0
         }
         
         if not db_path.exists():
@@ -124,7 +126,7 @@ class InvoiceMatcher:
             
             # İrsaliye koduna göre fatura bilgilerini çek
             query = """
-                SELECT i.invoice_number, i.total_amount 
+                SELECT i.invoice_number, i.total_amount, i.id
                 FROM despatch_documents d 
                 JOIN invoices i ON d.invoice_id = i.id 
                 WHERE d.despatch_id_short = ?
@@ -135,10 +137,28 @@ class InvoiceMatcher:
             row = cursor.fetchone()
             
             if row:
-                result['invoice_number'] = row[0]
-                result['total_amount'] = row[1]
+                invoice_number = row[0]
+                total_amount = row[1]
+                invoice_id = row[2]
+                
+                # Bu faturada kaç irsaliye var?
+                count_query = """
+                    SELECT COUNT(*) 
+                    FROM despatch_documents 
+                    WHERE invoice_id = ?
+                """
+                cursor.execute(count_query, (invoice_id,))
+                irsaliye_count = cursor.fetchone()[0]
+                
+                # Tutarı irsaliye sayısına böl
+                ortalama_tutar = total_amount / irsaliye_count if irsaliye_count > 0 else total_amount
+                
+                result['invoice_number'] = invoice_number
+                result['total_amount'] = ortalama_tutar
+                result['irsaliye_count'] = irsaliye_count
                 result['found'] = True
-                logger.debug(f"Eşleşme bulundu: {irsaliye_code} -> {row[0]}")
+                
+                logger.debug(f"Eşleşme bulundu: {irsaliye_code} -> {invoice_number} ({irsaliye_count} irsaliye, ortalama: {ortalama_tutar:.2f})")
             else:
                 logger.debug(f"Eşleşme bulunamadı: {irsaliye_code}")
             
@@ -218,6 +238,11 @@ class InvoiceMatcher:
                     durum = 'Eşleşti ✓'
                     gelen_fatura_no = search_result['invoice_number']
                     gelen_tutar = search_result['total_amount']
+                    gelen_irsaliye_count = search_result['irsaliye_count']
+                    
+                    # Gelen faturada çoklu irsaliye varsa işaretle
+                    if gelen_irsaliye_count > 1:
+                        gelen_fatura_no = f"{gelen_fatura_no} (÷{gelen_irsaliye_count})"
                 else:
                     durum = 'Bulunamadı ✗'
                     gelen_fatura_no = '-'
