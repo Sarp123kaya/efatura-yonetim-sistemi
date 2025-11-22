@@ -187,6 +187,10 @@ class InvoiceMatcher:
                 })
                 continue
             
+            # Çoklu irsaliye durumunda ortalama tutar hesapla
+            irsaliye_sayisi = len(irsaliye_codes)
+            ortalama_tutar = giden_tutar / irsaliye_sayisi if irsaliye_sayisi > 0 else giden_tutar
+            
             # Her irsaliye kodu için arama yap
             for prefix, number in irsaliye_codes:
                 irsaliye_code = f"{prefix}-{number}"
@@ -215,7 +219,7 @@ class InvoiceMatcher:
                 
                 results.append({
                     'Giden_Fatura_No': giden_fatura_no,
-                    'Giden_Tutar_TL': giden_tutar,
+                    'Giden_Tutar_TL': ortalama_tutar,  # Ortalama tutar kullan
                     'Irsaliye_Kodu': irsaliye_code,
                     'Firma': firma,
                     'Gelen_Fatura_No': gelen_fatura_no,
@@ -250,6 +254,14 @@ class InvoiceMatcher:
             'Gelen_Tutar_TL': 0,
             'Durum': ''
         })
+        
+        # Eski rapor dosyalarını sil
+        for old_file in self.output_dir.glob("Fatura_Eslesme_Raporu_*.xlsx"):
+            try:
+                old_file.unlink()
+                logger.info(f"🗑️  Eski rapor silindi: {old_file.name}")
+            except Exception as e:
+                logger.warning(f"⚠️  Eski rapor silinemedi: {old_file.name} - {e}")
         
         # Dosya adı (timestamp ile)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
