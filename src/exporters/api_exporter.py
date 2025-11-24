@@ -39,8 +39,8 @@ def extract_irsaliye_from_description(description: str) -> str:
     for match in matches1:
         irsaliye_numbers.append(f"IRS{match}")
     
-    # Pattern 2: A- veya F- prefix'li numaralar
-    pattern2 = r'([AF])-(\d{5,})'
+    # Pattern 2: A- veya F- prefix'li numaralar (4-5 haneli)
+    pattern2 = r'([AF])[-/\s]*(\d{4,5})'
     matches2 = re.findall(pattern2, description, re.IGNORECASE)
     for match in matches2:
         irsaliye_numbers.append(f"{match[0]}-{match[1]}")
