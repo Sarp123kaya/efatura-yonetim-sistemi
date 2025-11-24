@@ -189,7 +189,22 @@ class InvoiceMatcher:
         for idx, row in df.iterrows():
             giden_fatura_no = row.get('invoiceNumber', '')
             giden_tutar = row.get('totalTL', 0)
+            giden_tarih = row.get('date', '')
             description = row.get('description', '')
+            
+            # Tarihi gün.ay.yıl formatına çevir
+            try:
+                if giden_tarih:
+                    from datetime import datetime
+                    if isinstance(giden_tarih, str):
+                        tarih_obj = datetime.fromisoformat(giden_tarih.replace('T', ' ').split('.')[0])
+                    else:
+                        tarih_obj = giden_tarih
+                    giden_tarih_formatted = tarih_obj.strftime('%d.%m.%Y')
+                else:
+                    giden_tarih_formatted = ''
+            except:
+                giden_tarih_formatted = str(giden_tarih)
             
             # Description'dan irsaliye kodlarını çıkar
             irsaliye_codes = self.extract_irsaliye_codes(description)
@@ -197,6 +212,7 @@ class InvoiceMatcher:
             if not irsaliye_codes:
                 # İrsaliye kodu bulunamadı
                 results.append({
+                    'Tarih': giden_tarih_formatted,
                     'Giden_Fatura_No': giden_fatura_no,
                     'Giden_Tutar_TL': giden_tutar,
                     'Irsaliye_Kodu': 'Bulunamadı',
@@ -254,6 +270,7 @@ class InvoiceMatcher:
                 fark_kdv_dusulmus = fark - kdv_20  # KDV düşülmüş fark
                 
                 results.append({
+                    'Tarih': giden_tarih_formatted,
                     'Giden_Fatura_No': giden_fatura_no + coklu_irsaliye_isareti,  # İşaret ekle
                     'Giden_Tutar_TL': ortalama_tutar,  # Ortalama tutar kullan
                     'Irsaliye_Kodu': irsaliye_code,
@@ -285,6 +302,7 @@ class InvoiceMatcher:
         """
         # NaN değerlerini temizle
         df = df.fillna({
+            'Tarih': '',
             'Giden_Fatura_No': '',
             'Giden_Tutar_TL': 0,
             'Irsaliye_Kodu': '',
@@ -359,24 +377,25 @@ class InvoiceMatcher:
                 worksheet.write(0, col_num, value, header_format)
             
             # Sütun genişliklerini ayarla
-            worksheet.set_column('A:A', 25)  # Giden_Fatura_No
-            worksheet.set_column('B:B', 18)  # Giden_Tutar_TL
-            worksheet.set_column('C:C', 18)  # Irsaliye_Kodu
-            worksheet.set_column('D:D', 15)  # Firma
-            worksheet.set_column('E:E', 20)  # Gelen_Fatura_No
-            worksheet.set_column('F:F', 18)  # Gelen_Tutar_TL
-            worksheet.set_column('G:G', 18)  # Fark_TL
-            worksheet.set_column('H:H', 18)  # KDV_20_TL
-            worksheet.set_column('I:I', 20)  # Fark_KDV_Dusulmus_TL
-            worksheet.set_column('J:J', 20)  # Durum
+            worksheet.set_column('A:A', 12)  # Tarih
+            worksheet.set_column('B:B', 25)  # Giden_Fatura_No
+            worksheet.set_column('C:C', 18)  # Giden_Tutar_TL
+            worksheet.set_column('D:D', 18)  # Irsaliye_Kodu
+            worksheet.set_column('E:E', 15)  # Firma
+            worksheet.set_column('F:F', 20)  # Gelen_Fatura_No
+            worksheet.set_column('G:G', 18)  # Gelen_Tutar_TL
+            worksheet.set_column('H:H', 18)  # Fark_TL
+            worksheet.set_column('I:I', 18)  # KDV_20_TL
+            worksheet.set_column('J:J', 20)  # Fark_KDV_Dusulmus_TL
+            worksheet.set_column('K:K', 20)  # Durum
             
             # Para birimi formatını uygula
             for row_num in range(1, len(df) + 1):
-                worksheet.write(row_num, 1, df.iloc[row_num - 1]['Giden_Tutar_TL'], currency_format)
-                worksheet.write(row_num, 5, df.iloc[row_num - 1]['Gelen_Tutar_TL'], currency_format)
-                worksheet.write(row_num, 6, df.iloc[row_num - 1]['Fark_TL'], currency_format)
-                worksheet.write(row_num, 7, df.iloc[row_num - 1]['KDV_20_TL'], currency_format)
-                worksheet.write(row_num, 8, df.iloc[row_num - 1]['Fark_KDV_Dusulmus_TL'], currency_format)
+                worksheet.write(row_num, 2, df.iloc[row_num - 1]['Giden_Tutar_TL'], currency_format)
+                worksheet.write(row_num, 6, df.iloc[row_num - 1]['Gelen_Tutar_TL'], currency_format)
+                worksheet.write(row_num, 7, df.iloc[row_num - 1]['Fark_TL'], currency_format)
+                worksheet.write(row_num, 8, df.iloc[row_num - 1]['KDV_20_TL'], currency_format)
+                worksheet.write(row_num, 9, df.iloc[row_num - 1]['Fark_KDV_Dusulmus_TL'], currency_format)
             
             # Durum sütununa göre satır renklendirme
             for row_num in range(1, len(df) + 1):
@@ -389,8 +408,8 @@ class InvoiceMatcher:
                 else:
                     row_format = error_format
                 
-                # Sadece durum sütununu renklendir (J sütunu - 9. index)
-                worksheet.write(row_num, 9, durum, row_format)
+                # Sadece durum sütununu renklendir (K sütunu - 10. index)
+                worksheet.write(row_num, 10, durum, row_format)
             
             # İstatistikler ekle
             last_row = len(df) + 3
