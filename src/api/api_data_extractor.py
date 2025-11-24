@@ -17,6 +17,7 @@ ve Excel dosyalarına kaydeder.
 import requests
 import pandas as pd
 import os
+import sys
 import time
 import sqlite3
 import re
@@ -28,12 +29,15 @@ from typing import Dict, List, Tuple
 import warnings
 warnings.filterwarnings('ignore')
 
+# Proje kök dizinini sys.path'e ekle
+project_root = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(project_root))
+
 # API Database modülünü import et
-from api.api_database import APIDatabase
+from src.api.api_database import APIDatabase
 
 # Logging konfigürasyonu
 # Log dosyasını proje kök dizinine yerleştir
-project_root = Path(__file__).resolve().parent.parent.parent
 log_file = project_root / "data" / "logs" / "api_extraction.log"
 log_file.parent.mkdir(parents=True, exist_ok=True)
 
