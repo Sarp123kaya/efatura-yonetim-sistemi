@@ -199,6 +199,8 @@ class IsbasiAPIDataExtractor:
             )
             
             if response.status_code == 200:
+                # Türkçe karakter desteği için encoding'i zorla UTF-8 yap
+                response.encoding = 'utf-8'
                 response_data = response.json()
                 data = response_data.get('data', {})
                 self.access_token = data.get('accessToken')
@@ -303,6 +305,8 @@ class IsbasiAPIDataExtractor:
                     logger.error(f"❌ HTTP {response.status_code}")
                     break
                 
+                # Türkçe karakter desteği için encoding'i zorla UTF-8 yap
+                response.encoding = 'utf-8'
                 response_data = response.json()
                 
                 # Veri yapısını analiz et
