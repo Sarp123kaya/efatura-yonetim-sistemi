@@ -89,6 +89,44 @@ class APIDatabase:
         logger.info("✅ API veritabanı şeması oluşturuldu")
         return conn
     
+    def clear_all_data(self) -> bool:
+        """
+        Veritabanındaki tüm verileri temizler (tablolar kalır, sadece veriler silinir)
+        Her yeni API çekiminde eski verileri temizlemek için kullanılır
+        
+        Returns:
+            bool: Başarı durumu
+        """
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            cursor = conn.cursor()
+            
+            # İlişkili tabloları önce temizle (foreign key constraint)
+            cursor.execute('DELETE FROM despatch_references')
+            deleted_despatch = cursor.rowcount
+            
+            # Ana fatura tablosunu temizle
+            cursor.execute('DELETE FROM invoices')
+            deleted_invoices = cursor.rowcount
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"🗑️  Veritabanı temizlendi:")
+            logger.info(f"   📊 Silinen faturalar: {deleted_invoices}")
+            logger.info(f"   📄 Silinen irsaliyeler: {deleted_despatch}")
+            
+            print(f"🗑️  Eski veriler temizlendi:")
+            print(f"   📊 Faturalar: {deleted_invoices}")
+            print(f"   📄 İrsaliyeler: {deleted_despatch}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Veritabanı temizleme hatası: {e}")
+            print(f"⚠️  Veritabanı temizleme hatası: {e}")
+            return False
+    
     @staticmethod
     def extract_irsaliye_from_description(description: str) -> List[str]:
         """

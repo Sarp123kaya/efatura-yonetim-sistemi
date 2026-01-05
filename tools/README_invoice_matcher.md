@@ -28,9 +28,9 @@ python3 tools/invoice_matcher.py
 5. **Gelen_Fatura_No**: Veritabanında bulunan karşılık fatura numarası
 6. **Gelen_Tutar_TL**: Gelen fatura tutarı
 7. **Durum**: 
-   - ✅ **Eşleşti ✓** (Yeşil arka plan)
-   - ❌ **Bulunamadı ✗** (Kırmızı arka plan)
-   - ⚠️ **İrsaliye kodu yok ⚠** (Sarı arka plan)
+   - ✅ **Eşleşti ✓** (**Durum hücresi** yeşil arka plan)
+   - ❌ **Bulunamadı ✗** (**Durum hücresi** kırmızı arka plan)
+   - ⚠️ **İrsaliye kodu yok ⚠** (**Durum hücresi** sarı arka plan)
 
 ### İstatistikler
 

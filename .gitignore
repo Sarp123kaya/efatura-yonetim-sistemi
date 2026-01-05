@@ -27,7 +27,8 @@ kayıtlar/*.xlsx
 data/logs/*.log
 
 # XML dosyaları (hassas veri içerebilir)
-# data/xml/**/*.xml
+data/xml/
+data/xml/**/*.xml
 
 # Mac OS
 .DS_Store

@@ -1,7 +1,9 @@
 # E-Fatura Yönetim Sistemi - Gerekli Paketler
 
-# Web Dashboard
+# Web Dashboard (opsiyonel)
+# Not: Bu repoda şu an Flask/Django kullanan bir modül yok. İleride web arayüzü eklenirse kullanılabilir.
 Flask>=3.0.0
+Django>=4.2.0
 
 # Excel İşlemleri
 openpyxl>=3.1.0
@@ -12,6 +14,7 @@ xlsxwriter>=3.1.0
 requests>=2.31.0
 
 # Veri İşleme
+# Not: Parser'lar şu an standart kütüphane `xml.etree.ElementTree` kullanıyor; lxml opsiyoneldir.
 lxml>=4.9.0
 
 # Güvenlik (şifre girişi)

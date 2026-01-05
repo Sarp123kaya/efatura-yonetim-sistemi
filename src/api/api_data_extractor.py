@@ -61,12 +61,19 @@ class IsbasiAPIDataExtractor:
     def __init__(self):
         """API extractor sınıfını başlatır"""
         self.session = requests.Session()
-        self.base_url = "https://mw-jplatform.isbasi.com"
-        self.api_key = "EC39ABD610A84916869177E19B5DC9D9"
-        self.username = "ycl-men@hotmail.com"
+        # Güvenlik: API bilgileri repoya hardcode edilmez, ortam değişkenlerinden alınır.
+        # Gerekli değişkenler: ISBASI_API_KEY, ISBASI_USERNAME
+        self.base_url = os.getenv("ISBASI_BASE_URL", "https://mw-jplatform.isbasi.com").rstrip("/")
+        self.api_key = os.getenv("ISBASI_API_KEY")
+        self.username = os.getenv("ISBASI_USERNAME")
         self.password = None
-        self.verify_ssl = False
+        self.verify_ssl = os.getenv("ISBASI_VERIFY_SSL", "true").strip().lower() in ("1", "true", "yes", "y", "on")
         self.timeout = 30
+
+        if not self.api_key or not self.username:
+            print("❌ Eksik konfigürasyon: ISBASI_API_KEY ve ISBASI_USERNAME ortam değişkenleri tanımlı olmalı.")
+            print("   Örnek: cp .env.example .env  (sonra .env içini doldurun)")
+            raise SystemExit(2)
         
         # Session ayarları
         self.session.verify = self.verify_ssl
@@ -117,12 +124,13 @@ class IsbasiAPIDataExtractor:
             'delay_between_requests': 0.5
         }
         
-        # Fatura numarası filtresi
-        self.min_invoice_number = "DKE2025000000790"  # Bu numaradan itibaren çekilecek
+        # Fatura numarası filtresi kaldırıldı (HTTP 500 hatası veriyordu)
+        # Bunun yerine sadece giden faturaları çek (PURCHASE_INVOICE hariç)
+        self.only_outgoing = True  # Sadece giden faturalar
         
         logger.info("API Data Extractor başlatıldı")
         logger.info(f"Hedef veritabanı: {self.db_path}")
-        logger.info(f"Fatura filtresi: >= {self.min_invoice_number}")
+        logger.info(f"Fatura tipi: Sadece GİDEN faturalar (PURCHASE_INVOICE hariç)")
     
     @staticmethod
     def clean_bank_info_from_description(description: str) -> str:
@@ -247,14 +255,14 @@ class IsbasiAPIDataExtractor:
             # Güvenlik: Şifreyi bellekten temizle
             self.password = None
     
-    def fetch_data_with_pagination(self, endpoint: str, data_type: str, min_invoice_number: str = None) -> Tuple[bool, List[Dict]]:
+    def fetch_data_with_pagination(self, endpoint: str, data_type: str, only_outgoing: bool = False) -> Tuple[bool, List[Dict]]:
         """
         Sayfalama ile veri çeker
         
         Args:
             endpoint: API endpoint'i
             data_type: Veri türü (customers, invoices, products)
-            min_invoice_number: Minimum fatura numarası (bu numaradan itibaren çeker)
+            only_outgoing: Sadece giden faturaları çek (PURCHASE_INVOICE hariç)
             
         Returns:
             Tuple[bool, List[Dict]]: (başarı durumu, veri listesi)
@@ -263,25 +271,19 @@ class IsbasiAPIDataExtractor:
         page = 1
         total_pages = 0
         
-        if min_invoice_number:
-            print(f"📊 {data_type.upper()} verileri çekiliyor (>= {min_invoice_number})...")
+        if only_outgoing:
+            print(f"📊 {data_type.upper()} verileri çekiliyor (sadece GİDEN faturalar)...")
         else:
             print(f"📊 {data_type.upper()} verileri çekiliyor...")
         
         try:
             while page <= self.pagination_config['max_pages']:
-                # Filtreler - fatura numarasına göre
-                filters = []
-                if min_invoice_number and data_type in ['all_invoices', 'invoices']:
-                    filters.append({
-                        "field": "invoiceNumber",
-                        "operator": "gte",
-                        "value": min_invoice_number
-                    })
+                # API filtreleri HTTP 500 hatası veriyor
+                # Bunun yerine tüm verileri çek, sonra Python'da filtrele
                 
-                # GİB API yapısına uygun format
+                # GİB API yapısına uygun format - FİLTRESİZ
                 payload = {
-                        "filters": filters,
+                        "filters": [],
                         "sorting": {},
                         "paging": {
                             "currentPage": page,
@@ -337,8 +339,26 @@ class IsbasiAPIDataExtractor:
                     logger.info(f"📄 Sayfa {page} boş - veri çekme tamamlandı")
                     break
                 
+                # Metin alanlarını string olarak zorla (sıfırları korumak için)
+                for item in page_data:
+                    if isinstance(item, dict):
+                        # Description, invoiceNumber, firmName vb. metin alanlarını string'e çevir
+                        text_fields = ['description', 'invoiceNumber', 'firmName', 'id']
+                        for field in text_fields:
+                            if field in item and item[field] is not None:
+                                item[field] = str(item[field])
+                
+                # Python tarafında filtrele (API filtresi HTTP 500 veriyor)
+                if only_outgoing and data_type in ['all_invoices', 'invoices']:
+                    # Sadece giden faturaları al (PURCHASE_INVOICE hariç)
+                    original_count = len(page_data)
+                    page_data = [item for item in page_data if item.get('type') != 'PURCHASE_INVOICE']
+                    filtered_count = len(page_data)
+                    if original_count != filtered_count:
+                        logger.info(f"   🔍 Filtreleme: {original_count} kayıt → {filtered_count} giden fatura")
+                
                 all_data.extend(page_data)
-                print(f"   📄 Sayfa {page}: {len(page_data)} kayıt")
+                print(f"   📄 Sayfa {page}: {len(page_data)} kayıt (giden faturalar)")
                 
                 # Toplam sayfa sayısını kontrol et
                 if total_pages > 0 and page >= total_pages:
@@ -356,11 +376,11 @@ class IsbasiAPIDataExtractor:
             return False, []
     
     def fetch_invoices(self) -> bool:
-        """Tüm faturaları çeker (giden ve gelen)"""
+        """Sadece giden faturaları çeker (PURCHASE_INVOICE hariç)"""
         success, invoices_data = self.fetch_data_with_pagination(
             self.endpoints['invoices'], 
             'all_invoices',
-            min_invoice_number=self.min_invoice_number
+            only_outgoing=self.only_outgoing
         )
         
         if success and invoices_data:
@@ -377,7 +397,14 @@ class IsbasiAPIDataExtractor:
         Sadece 8 sütun: id, date, invoiceNumber, totalTL, taxableAmount, firmName, description, type
         """
         try:
+            # DataFrame oluştururken metin sütunlarını string olarak zorla
             df = pd.DataFrame(invoices_data)
+            
+            # Metin sütunlarını string'e çevir (sıfırları korumak için)
+            text_columns = ['invoiceNumber', 'description', 'firmName']
+            for col in text_columns:
+                if col in df.columns:
+                    df[col] = df[col].astype(str)
             
             # Sadece istenen 8 sütunu al (type eklendi)
             required_columns = ['id', 'date', 'invoiceNumber', 'totalTL', 'taxableAmount', 'firmName', 'description', 'type']
@@ -417,6 +444,17 @@ class IsbasiAPIDataExtractor:
                     'border': 1
                 })
                 
+                text_format = workbook.add_format({
+                    'border': 1,
+                    'text_wrap': False
+                })
+                
+                # Metin sütunları için @ formatı (string olarak tutulması için)
+                text_only_format = workbook.add_format({
+                    'num_format': '@',
+                    'border': 1
+                })
+                
                 df_filtered.to_excel(writer, index=False, sheet_name='Tum_Faturalar')
                 worksheet = writer.sheets['Tum_Faturalar']
                 
@@ -424,17 +462,21 @@ class IsbasiAPIDataExtractor:
                 for col_num, value in enumerate(df_filtered.columns.values):
                     worksheet.write(0, col_num, value, header_format)
                 
-                # Sütun genişliklerini ayarla
+                # Sütun genişliklerini ve formatlarını ayarla
                 for i, col in enumerate(df_filtered.columns):
                     if col in ['totalTL', 'taxableAmount']:
                         worksheet.set_column(i, i, 18, currency_format)
                     elif col == 'date':
                         worksheet.set_column(i, i, 15, date_format)
                     elif col == 'description':
-                        worksheet.set_column(i, i, 50)
+                        worksheet.set_column(i, i, 50, text_only_format)
+                    elif col in ['invoiceNumber', 'firmName', 'id', 'type']:
+                        # Bu sütunları metin olarak formatla (sıfırları korumak için)
+                        column_len = max(df_filtered[col].astype(str).map(len).max(), len(col))
+                        worksheet.set_column(i, i, min(column_len + 2, 40), text_only_format)
                     else:
                         column_len = max(df_filtered[col].astype(str).map(len).max(), len(col))
-                        worksheet.set_column(i, i, min(column_len + 2, 40))
+                        worksheet.set_column(i, i, min(column_len + 2, 40), text_format)
                 
                 # İstatistikler ekle
                 last_row = len(df_filtered) + 1
@@ -572,6 +614,14 @@ class IsbasiAPIDataExtractor:
         if not self.secure_login():
             return False
         
+        # Eski verileri temizle (her seferinde fresh data)
+        print("\n" + "=" * 60)
+        print("ESKİ VERİLER TEMİZLENİYOR")
+        print("=" * 60)
+        
+        if not self.api_db.clear_all_data():
+            logger.warning("⚠️  Veritabanı temizlenemedi, yine de devam ediliyor...")
+        
         print("\n" + "=" * 60)
         print("FATURA VERİLERİ ÇEKİLİYOR")
         print("=" * 60)
@@ -585,7 +635,7 @@ class IsbasiAPIDataExtractor:
         print("=" * 60)
         
         results = {
-            'Tüm Faturalar (Giden + Gelen)': invoices_success
+            'Giden Faturalar': invoices_success
         }
         
         for data_type, success in results.items():
@@ -617,11 +667,12 @@ class IsbasiAPIDataExtractor:
 
 
 def main():
-    """Ana fonksiyon - Sadece fatura verilerini çeker"""
+    """Ana fonksiyon - Sadece giden fatura verilerini çeker"""
     print("\n" + "="*60)
-    print("İŞBAŞI API - FATURA ÇEKME MODÜLÜ")
+    print("İŞBAŞI API - GİDEN FATURA ÇEKME MODÜLÜ")
     print("="*60)
-    print("Bu modül sadece giden ve gelen faturaları çeker.")
+    print("Bu modül sadece GİDEN faturaları çeker.")
+    print("(PURCHASE_INVOICE türündeki gelen faturalar hariç)")
     print("="*60 + "\n")
     
     extractor = IsbasiAPIDataExtractor()
