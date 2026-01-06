@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 import logging
+import sys
 
 # Logging ayarları
 logging.basicConfig(
@@ -25,6 +26,11 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Enable `import src...` when running as a script (optional Postgres writer)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# TODO: Replace this sys.path hack with proper packaging/entrypoints.
+sys.path.insert(0, str(PROJECT_ROOT))
 
 
 class InvoiceMatcher:
@@ -113,7 +119,9 @@ class InvoiceMatcher:
             'invoice_number': None,
             'total_amount': None,
             'found': False,
-            'irsaliye_count': 0
+            'irsaliye_count': 0,
+            'invoice_id': None,
+            'invoice_total_amount': None
         }
         
         if not db_path.exists():
@@ -156,6 +164,8 @@ class InvoiceMatcher:
                 result['invoice_number'] = invoice_number
                 result['total_amount'] = ortalama_tutar
                 result['irsaliye_count'] = irsaliye_count
+                result['invoice_id'] = invoice_id
+                result['invoice_total_amount'] = total_amount
                 result['found'] = True
                 
                 logger.debug(f"Eşleşme bulundu: {irsaliye_code} -> {invoice_number} ({irsaliye_count} irsaliye, ortalama: {ortalama_tutar:.2f})")
@@ -168,8 +178,46 @@ class InvoiceMatcher:
             logger.error(f"Veritabanı hatası ({db_path}): {e}")
         
         return result
+
+    def _fetch_in_invoice_details(self, db_path: Path, invoice_id: int) -> dict:
+        """
+        Fetch full incoming invoice + all dispatch docs from SQLite for Postgres parallel write.
+        """
+        details = {
+            "invoice_number": "",
+            "issue_date": None,
+            "total_amount": 0,
+            "description": None,
+            "source_file": None,
+            "dispatch_items": [],  # [(code, raw_token), ...]
+        }
+        if not db_path.exists() or not invoice_id:
+            return details
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT invoice_number, issue_date, total_amount, description, source_file FROM invoices WHERE id = ?",
+            (int(invoice_id),),
+        )
+        row = cursor.fetchone()
+        if row:
+            details["invoice_number"] = row[0] or ""
+            details["issue_date"] = row[1]
+            details["total_amount"] = row[2] or 0
+            details["description"] = row[3]
+            details["source_file"] = row[4]
+
+        cursor.execute(
+            "SELECT despatch_id_short, despatch_id_full FROM despatch_documents WHERE invoice_id = ? ORDER BY id",
+            (int(invoice_id),),
+        )
+        details["dispatch_items"] = [(r[0], r[1]) for r in cursor.fetchall() if r and r[0]]
+
+        conn.close()
+        return details
     
-    def process_api_invoices(self) -> pd.DataFrame:
+    def process_api_invoices(self, pg_conn=None) -> pd.DataFrame:
         """
         API Excel dosyasını okur ve her fatura için eşleşme arar
         
@@ -185,8 +233,10 @@ class InvoiceMatcher:
         
         # Sonuç listesi
         results = []
+        written_in_invoices = set()   # (db_path_str, invoice_id)
         
         for idx, row in df.iterrows():
+            api_external_id = row.get('id', None)
             giden_fatura_no = row.get('invoiceNumber', '')
             giden_tutar = row.get('totalTL', 0)
             giden_tarih = row.get('date', '')
@@ -232,6 +282,31 @@ class InvoiceMatcher:
             
             # Çoklu irsaliye işareti
             coklu_irsaliye_isareti = f" (÷{irsaliye_sayisi})" if irsaliye_sayisi > 1 else ""
+
+            # Parallel Postgres write: OUT invoice + allocations (remainder-safe 2dp)
+            if pg_conn is not None:
+                try:
+                    from src.db.pg_writer import extract_dispatch_codes_with_tokens, write_invoice_with_equal_split_allocations
+
+                    dispatch_items_out = extract_dispatch_codes_with_tokens(description)
+                    if dispatch_items_out:
+                        write_invoice_with_equal_split_allocations(
+                            pg_conn,
+                            source="ISBASI_API",
+                            direction="OUT",
+                            invoice_no=str(giden_fatura_no or ""),
+                            total_amount=giden_tutar,
+                            currency="TRY",
+                            description_raw=str(description or ""),
+                            description_clean=str(description or ""),
+                            external_id=str(api_external_id).strip() if api_external_id is not None and str(api_external_id).strip() else None,
+                            issue_date=row.get("date", None),
+                            raw_payload=None,
+                            dispatch_codes_and_tokens=dispatch_items_out,
+                        )
+                except Exception as e:
+                    # Never break Excel output; Postgres is additive/parallel only.
+                    logger.exception("Postgres write failed (Matcher OUT): %s", e)
             
             # Her irsaliye kodu için arama yap
             for prefix, number in irsaliye_codes:
@@ -255,10 +330,40 @@ class InvoiceMatcher:
                     gelen_fatura_no = search_result['invoice_number']
                     gelen_tutar = search_result['total_amount']
                     gelen_irsaliye_count = search_result['irsaliye_count']
+                    gelen_invoice_id = search_result.get('invoice_id')
                     
                     # Gelen faturada çoklu irsaliye varsa işaretle
                     if gelen_irsaliye_count > 1:
                         gelen_fatura_no = f"{gelen_fatura_no} (÷{gelen_irsaliye_count})"
+
+                    # Parallel Postgres write: IN invoice + allocations (write once per SQLite invoice)
+                    if pg_conn is not None and gelen_invoice_id:
+                        key = (str(db_path), int(gelen_invoice_id))
+                        if key not in written_in_invoices:
+                            written_in_invoices.add(key)
+                            try:
+                                from src.db.pg_writer import write_invoice_with_equal_split_allocations
+
+                                details = self._fetch_in_invoice_details(db_path, int(gelen_invoice_id))
+                                src = "XML_AKGIPS" if db_path == self.akgips_db else "XML_FULLBOARD"
+                                write_invoice_with_equal_split_allocations(
+                                    pg_conn,
+                                    source=src,
+                                    direction="IN",
+                                    invoice_no=str(details.get("invoice_number") or ""),
+                                    total_amount=details.get("total_amount", 0),
+                                    currency="TRY",
+                                    description_raw=details.get("description"),
+                                    description_clean=details.get("description"),
+                                    external_id=None,  # XML: keep NULL to avoid uq_invoice_source_external collisions
+                                    source_file=details.get("source_file"),
+                                    issue_date=details.get("issue_date"),
+                                    raw_payload=None,
+                                    dispatch_codes_and_tokens=details.get("dispatch_items", []),
+                                )
+                            except Exception as e:
+                                # Never break Excel output; Postgres is additive/parallel only.
+                                logger.exception("Postgres write failed (Matcher IN): %s", e)
                 else:
                     durum = 'Bulunamadı ✗'
                     gelen_fatura_no = '-'
@@ -452,7 +557,20 @@ class InvoiceMatcher:
             logger.warning(f"⚠️ Fullboard veritabanı bulunamadı: {self.fullboard_db}")
         
         print("📊 Giden faturalar işleniyor...")
-        results_df = self.process_api_invoices()
+
+        # Optional: keep one Postgres connection for the entire matcher run
+        results_df = None
+        try:
+            from src.db.pg_writer import get_connection, is_pg_enabled
+
+            if is_pg_enabled():
+                with get_connection() as pg_conn:
+                    results_df = self.process_api_invoices(pg_conn=pg_conn)
+            else:
+                results_df = self.process_api_invoices(pg_conn=None)
+        except Exception as e:
+            logger.exception("Postgres matcher connection disabled due to error: %s", e)
+            results_df = self.process_api_invoices(pg_conn=None)
         
         print()
         print("📈 İstatistikler:")

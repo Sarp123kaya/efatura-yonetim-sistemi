@@ -31,6 +31,7 @@ warnings.filterwarnings('ignore')
 
 # Proje kök dizinini sys.path'e ekle
 project_root = Path(__file__).resolve().parent.parent.parent
+# TODO: Replace this sys.path hack with proper packaging/entrypoints.
 sys.path.insert(0, str(project_root))
 
 # API Database modülünü import et

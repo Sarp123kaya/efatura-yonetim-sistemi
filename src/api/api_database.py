@@ -208,7 +208,7 @@ class APIDatabase:
         
         return desc
     
-    def insert_invoice(self, conn: sqlite3.Connection, invoice_data: Dict) -> int:
+    def insert_invoice(self, conn: sqlite3.Connection, invoice_data: Dict, pg_conn=None) -> int:
         """
         Tek bir faturayı veritabanına ekler
         
@@ -276,6 +276,32 @@ class APIDatabase:
                 ''', (invoice_db_id, irsaliye_no))
             
             conn.commit()
+
+            # Parallel Postgres write path (does not affect SQLite/Excel behavior)
+            if pg_conn is not None:
+                try:
+                    from src.db.pg_writer import extract_dispatch_codes_with_tokens, write_invoice_with_equal_split_allocations
+
+                    dispatch_items = extract_dispatch_codes_with_tokens(cleaned_description)
+                    if dispatch_items:
+                        write_invoice_with_equal_split_allocations(
+                            pg_conn,
+                            source="ISBASI_API",
+                            direction="OUT",
+                            invoice_no=invoice_data.get("invoiceNumber", "") or "",
+                            total_amount=invoice_data.get("totalTL", 0),
+                            currency="TRY",
+                            description_raw=raw_description,
+                            description_clean=cleaned_description,
+                            external_id=str(invoice_data.get("id", "") or "").strip() or None,
+                            issue_date=invoice_data.get("date", None),
+                            raw_payload=invoice_data,
+                            dispatch_codes_and_tokens=dispatch_items,
+                        )
+                except Exception as e:
+                    # Never break existing SQLite/Excel flow; Postgres is additive/parallel only.
+                    logger.exception("Postgres write failed (API OUT): %s", e)
+
             return invoice_db_id
             
         except Exception as e:
@@ -302,17 +328,47 @@ class APIDatabase:
         
         logger.info(f"📊 {total} fatura işleniyor...")
         
-        for invoice in invoices_data:
-            result = self.insert_invoice(conn, invoice)
-            if result > 0:
-                added += 1
-                # Type'a göre say
-                if invoice.get('type') == 'PURCHASE_INVOICE':
-                    gelen += 1
-                else:
-                    giden += 1
+        # Optional: keep a single Postgres connection for the whole batch
+        try:
+            from src.db.pg_writer import get_connection, is_pg_enabled
+
+            if is_pg_enabled():
+                with get_connection() as pg_conn:
+                    for invoice in invoices_data:
+                        result = self.insert_invoice(conn, invoice, pg_conn=pg_conn)
+                        if result > 0:
+                            added += 1
+                            # Type'a göre say
+                            if invoice.get('type') == 'PURCHASE_INVOICE':
+                                gelen += 1
+                            else:
+                                giden += 1
+                        else:
+                            duplicate += 1
             else:
-                duplicate += 1
+                for invoice in invoices_data:
+                    result = self.insert_invoice(conn, invoice, pg_conn=None)
+                    if result > 0:
+                        added += 1
+                        if invoice.get('type') == 'PURCHASE_INVOICE':
+                            gelen += 1
+                        else:
+                            giden += 1
+                    else:
+                        duplicate += 1
+        except Exception as e:
+            # Never break existing SQLite behavior; Postgres is additive/parallel only.
+            logger.exception("Postgres batch write disabled due to error: %s", e)
+            for invoice in invoices_data:
+                result = self.insert_invoice(conn, invoice, pg_conn=None)
+                if result > 0:
+                    added += 1
+                    if invoice.get('type') == 'PURCHASE_INVOICE':
+                        gelen += 1
+                    else:
+                        giden += 1
+                else:
+                    duplicate += 1
         
         conn.close()
         

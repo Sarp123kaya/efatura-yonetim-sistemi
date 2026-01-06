@@ -8,8 +8,11 @@ import xml.etree.ElementTree as ET
 import base64
 import sqlite3
 import os
+import sys
 from datetime import datetime
 import glob
+from pathlib import Path
+import traceback
 
 # XML namespace'leri
 NAMESPACES = {
@@ -379,6 +382,10 @@ def main():
     # Proje kök dizinine git
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     os.chdir(project_root)
+
+    # Optional: enable `import src...` when running as a script
+    # TODO: Replace this sys.path hack with proper packaging/entrypoints.
+    sys.path.insert(0, str(Path(project_root)))
     
     # XML dosyalarını bul
     xml_files = glob.glob('data/xml/akgips/*.xml')
@@ -420,6 +427,37 @@ def main():
                 print(f"   - Satır sayısı: {len(invoice_data.get('invoice_lines', []))}")
                 print(f"   - İrsaliye sayısı: {len(invoice_data.get('despatch_documents', []))}")
                 processed_count += 1
+
+                # Parallel Postgres write path (does not affect SQLite/Excel behavior)
+                try:
+                    from src.db.pg_writer import get_connection, is_pg_enabled, write_invoice_with_equal_split_allocations
+
+                    if is_pg_enabled():
+                        dispatch_items = [
+                            (d.get("despatch_id_short"), d.get("despatch_id_full"))
+                            for d in invoice_data.get("despatch_documents", [])
+                            if d.get("despatch_id_short")
+                        ]
+                        with get_connection() as pg_conn:
+                            write_invoice_with_equal_split_allocations(
+                                pg_conn,
+                                source="XML_AKGIPS",
+                                direction="IN",
+                                invoice_no=invoice_data.get("invoice_number") or invoice_data.get("invoice_id") or "",
+                                total_amount=invoice_data.get("total_amount", 0),
+                                currency=invoice_data.get("currency", "TRY") or "TRY",
+                                description_raw=invoice_data.get("description"),
+                                description_clean=invoice_data.get("description"),
+                                external_id=None,  # XML: keep NULL to avoid uq_invoice_source_external collisions
+                                source_file=invoice_data.get("source_file"),
+                                issue_date=invoice_data.get("issue_date"),
+                                raw_payload=None,
+                                dispatch_codes_and_tokens=dispatch_items,
+                            )
+                except Exception as e:
+                    # Never break the existing flow; Postgres is additive/parallel only.
+                    print(f"⚠️ Postgres write failed (AKGIPS IN): {e}", file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
             except Exception as e:
                 print(f"   ❌ Veritabanına eklenirken hata: {str(e)}")
                 error_count += 1
