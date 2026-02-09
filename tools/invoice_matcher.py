@@ -99,9 +99,20 @@ class InvoiceMatcher:
         # Pattern: ([AF])\s*[-/]\s*(\d{4,5})
         # A veya F, sonra - veya / (boşluklarla), sonra 4-5 haneli numara
         matches = re.findall(self.irsaliye_pattern, desc)
-        
-        # Unique yapıp döndür
-        return list(set(matches))
+
+        def _normalize_number(num_str: str) -> str:
+            """
+            Normalize year-reset numbering:
+            - if int(num) >= 10000 => keep as 5 digits (no leading zeros)
+            - else => pad to 4 digits (e.g. 231 -> 0231)
+            """
+            n = int(num_str)
+            return str(n) if n >= 10000 else f"{n:04d}"
+
+        normalized = [(p.upper(), _normalize_number(n)) for (p, n) in matches]
+
+        # Unique yapıp döndür (normalize edilmiş)
+        return list(set(normalized))
     
     def search_in_database(self, irsaliye_code: str, db_path: Path) -> dict:
         """

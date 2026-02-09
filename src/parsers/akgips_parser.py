@@ -22,6 +22,18 @@ NAMESPACES = {
     'inv': 'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2'
 }
 
+def _normalize_dispatch_number_from_last5(last5: str) -> str:
+    """
+    Normalize dispatch number for year-reset cases.
+    - If numeric >= 10000 -> 5 digits (no leading zeros)
+    - Else -> 4 digits, left-padded with zeros (e.g. 231 -> 0231)
+    """
+    try:
+        n = int(str(last5))
+    except Exception:
+        n = int(str(last5).lstrip("0") or "0")
+    return str(n) if n >= 10000 else f"{n:04d}"
+
 def parse_xml_invoice(xml_file):
     """XML fatura dosyasını parse eder ve önemli bilgileri çıkarır"""
     try:
@@ -167,14 +179,14 @@ def parse_xml_invoice(xml_file):
                 despatch_data['despatch_id_full'] = full_id
                 
                 # AK GİPS için: A- + son 5 hane (örn: IRS2025000014740 -> A-14740)
-                # Başındaki 0'ları kaldır (A-07128 -> A-7128)
                 if full_id.startswith('IRS') and len(full_id) > 8:
-                    # A- öneki + son 5 hane (başındaki 0'lar kaldırılır)
-                    number = full_id[-5:].lstrip('0') or '0'  # Tüm 0'lar silinirse '0' kalsın
+                    # A- öneki + son 5 hane (yıl başı reset için 4 hane 0-pad / 5 hane korunur)
+                    number = _normalize_dispatch_number_from_last5(full_id[-5:])
                     despatch_data['despatch_id_short'] = 'A-' + number
                 else:
                     # IRS ile başlamıyorsa veya çok kısaysa, A- ekle
-                    number = (full_id[-5:] if len(full_id) >= 5 else full_id).lstrip('0') or '0'
+                    tail = (full_id[-5:] if len(full_id) >= 5 else full_id)
+                    number = _normalize_dispatch_number_from_last5(tail)
                     despatch_data['despatch_id_short'] = 'A-' + number
             
             # İrsaliye tarihi

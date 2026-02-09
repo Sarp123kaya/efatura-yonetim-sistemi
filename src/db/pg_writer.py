@@ -27,6 +27,15 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 _DISPATCH_RE = re.compile(r"([AF])\s*[-/]\s*(\d{4,5})", flags=re.IGNORECASE)
 
+def _normalize_dispatch_number(num_str: str) -> str:
+    """
+    Normalize year-reset numbering consistently with matchers/parsers.
+    - if int(num) >= 10000 => keep as 5 digits (no leading zeros)
+    - else => pad to 4 digits (e.g. 231 -> 0231)
+    """
+    n = int(num_str)
+    return str(n) if n >= 10000 else f"{n:04d}"
+
 
 def adapt_json(value: object) -> Optional[str]:
     """
@@ -108,7 +117,7 @@ def extract_dispatch_codes_with_tokens(text: str) -> List[Tuple[str, str]]:
         return []
     results: List[Tuple[str, str]] = []
     for m in _DISPATCH_RE.finditer(str(text).upper()):
-        prefix, num = m.group(1).upper(), m.group(2)
+        prefix, num = m.group(1).upper(), _normalize_dispatch_number(m.group(2))
         code = f"{prefix}-{num}"
         raw_token = m.group(0)
         results.append((code, raw_token))

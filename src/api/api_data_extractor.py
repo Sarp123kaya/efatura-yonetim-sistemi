@@ -34,6 +34,34 @@ project_root = Path(__file__).resolve().parent.parent.parent
 # TODO: Replace this sys.path hack with proper packaging/entrypoints.
 sys.path.insert(0, str(project_root))
 
+# Optional: load local .env without extra dependencies
+def _load_dotenv_if_present(dotenv_path: Path) -> None:
+    """
+    Minimal .env loader (no python-dotenv dependency).
+    - Only sets keys that are NOT already present in os.environ
+    - Ignores blank lines and comments
+    """
+    try:
+        if not dotenv_path.exists():
+            return
+        for line in dotenv_path.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            if "=" not in s:
+                continue
+            key, val = s.split("=", 1)
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = val
+    except Exception as e:
+        # Never break existing flow; just make the failure visible.
+        logger.warning("⚠️ .env okunamadı (%s): %s", dotenv_path, e)
+
+
+_load_dotenv_if_present(project_root / ".env")
+
 # API Database modülünü import et
 from src.api.api_database import APIDatabase
 
@@ -71,10 +99,37 @@ class IsbasiAPIDataExtractor:
         self.verify_ssl = os.getenv("ISBASI_VERIFY_SSL", "true").strip().lower() in ("1", "true", "yes", "y", "on")
         self.timeout = 30
 
-        if not self.api_key or not self.username:
-            print("❌ Eksik konfigürasyon: ISBASI_API_KEY ve ISBASI_USERNAME ortam değişkenleri tanımlı olmalı.")
-            print("   Örnek: cp .env.example .env  (sonra .env içini doldurun)")
-            raise SystemExit(2)
+        def _is_missing_or_placeholder(val: str | None) -> bool:
+            if val is None:
+                return True
+            v = str(val).strip()
+            if not v:
+                return True
+            # common placeholders from env.example / docs
+            placeholders = {
+                "YOUR_API_KEY_HERE",
+                "your.email@example.com",
+                "YOUR_USERNAME_HERE",
+            }
+            return v in placeholders
+
+        if _is_missing_or_placeholder(self.api_key) or _is_missing_or_placeholder(self.username):
+            # Safety: In production (systemd/non-interactive), fail fast instead of hanging for input.
+            if not sys.stdin.isatty():
+                print("❌ Eksik konfigürasyon: ISBASI_API_KEY ve ISBASI_USERNAME ortam değişkenleri tanımlı olmalı.")
+                print("   Örnek: cp env.example .env  (sonra .env içini doldurun)")
+                raise SystemExit(2)
+
+            print("⚠️ ISBASI_API_KEY / ISBASI_USERNAME eksik veya placeholder görünüyor.")
+            print("   Devam etmek için değerleri şimdi girin (dosyaya yazılmaz).")
+            # API key'i gizli al
+            entered_key = getpass.getpass("🔑 ISBASI_API_KEY: ").strip()
+            entered_user = input("👤 ISBASI_USERNAME: ").strip()
+            if not entered_key or not entered_user:
+                print("❌ ISBASI_API_KEY ve ISBASI_USERNAME boş olamaz.")
+                raise SystemExit(2)
+            self.api_key = entered_key
+            self.username = entered_user
         
         # Session ayarları
         self.session.verify = self.verify_ssl
@@ -273,18 +328,26 @@ class IsbasiAPIDataExtractor:
         total_pages = 0
         
         if only_outgoing:
-            print(f"📊 {data_type.upper()} verileri çekiliyor (sadece GİDEN faturalar)...")
+            print(f"📊 {data_type.upper()} verileri çekiliyor (sadece GİDEN faturalar, 2026 yılı)...")
         else:
-            print(f"📊 {data_type.upper()} verileri çekiliyor...")
+            print(f"📊 {data_type.upper()} verileri çekiliyor (2026 yılı)...")
         
         try:
             while page <= self.pagination_config['max_pages']:
-                # API filtreleri HTTP 500 hatası veriyor
-                # Bunun yerine tüm verileri çek, sonra Python'da filtrele
-                
-                # GİB API yapısına uygun format - FİLTRESİZ
+                # 2026 yılı verileri için tarih filtresi
                 payload = {
-                        "filters": [],
+                        "filters": [
+                            {
+                                "columnName": "date",
+                                "operator": 5,  # >= (Büyük veya eşit)
+                                "value": "2026-01-01T00:00:00"
+                            },
+                            {
+                                "columnName": "date",
+                                "operator": 2,  # <= (Küçük veya eşit)
+                                "value": "2026-12-31T23:59:59"
+                            }
+                        ],
                         "sorting": {},
                         "paging": {
                             "currentPage": page,
@@ -668,12 +731,13 @@ class IsbasiAPIDataExtractor:
 
 
 def main():
-    """Ana fonksiyon - Sadece giden fatura verilerini çeker"""
+    """Ana fonksiyon - Sadece giden fatura verilerini çeker (2026 yılı)"""
     print("\n" + "="*60)
     print("İŞBAŞI API - GİDEN FATURA ÇEKME MODÜLÜ")
     print("="*60)
     print("Bu modül sadece GİDEN faturaları çeker.")
     print("(PURCHASE_INVOICE türündeki gelen faturalar hariç)")
+    print("📅 SADECE 2026 YILI VERİLERİ")
     print("="*60 + "\n")
     
     extractor = IsbasiAPIDataExtractor()
