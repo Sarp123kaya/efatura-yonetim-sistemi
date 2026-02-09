@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 import getpass
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -99,7 +99,7 @@ class IsbasiAPIDataExtractor:
         self.verify_ssl = os.getenv("ISBASI_VERIFY_SSL", "true").strip().lower() in ("1", "true", "yes", "y", "on")
         self.timeout = 30
 
-        def _is_missing_or_placeholder(val: str | None) -> bool:
+        def _is_missing_or_placeholder(val: Optional[str]) -> bool:
             if val is None:
                 return True
             v = str(val).strip()
