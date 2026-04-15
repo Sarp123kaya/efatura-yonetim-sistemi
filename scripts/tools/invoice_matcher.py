@@ -61,7 +61,7 @@ class InvoiceMatcher:
         #   - F/9099 (/ ile birleşik)
         #   - F- 9026 (boşluklu)
         # Prefix olmayan kodlar atlanır (örn: İRSALİYE NO: 18277)
-        self.irsaliye_pattern = r'([AF])\s*[-/]\s*(\d{4,5})'
+        self.irsaliye_pattern = r'([AFT])\s*[-/]\s*(\d+)'
         
         logger.info("Invoice Matcher başlatıldı")
         logger.info(f"API Excel: {self.api_excel}")

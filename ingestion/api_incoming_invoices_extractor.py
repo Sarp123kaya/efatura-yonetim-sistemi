@@ -65,7 +65,7 @@ def _load_dotenv_if_present(dotenv_path: Path) -> None:
 _load_dotenv_if_present(project_root / ".env")
 
 # API Database modülünü import et
-from src.api.api_database import APIDatabase
+from archive.legacy_src.api_database import APIDatabase
 
 # Logging konfigürasyonu
 log_file = project_root / "data" / "logs" / "api_incoming_extraction.log"
@@ -341,12 +341,13 @@ class IsbasiAPIIncomingInvoicesExtractor:
             logger.error(f"XML çekme hatası (UUID: {uuid}): {e}")
             return None
     
-    def parse_despatch_documents_from_xml(self, xml_content: str) -> List[Dict]:
+    def parse_despatch_documents_from_xml(self, xml_content: str, supplier: str = None) -> List[Dict]:
         """
         XML içeriğinden irsaliye bilgilerini parse eder
         
         Args:
             xml_content: Fatura XML içeriği
+            supplier: Tedarikçi adı (supplier-based normalization için)
             
         Returns:
             List[Dict]: İrsaliye bilgileri listesi
@@ -355,6 +356,13 @@ class IsbasiAPIIncomingInvoicesExtractor:
         
         try:
             root = ET.fromstring(xml_content)
+            
+            # Import normalize function (lazy import to avoid circular dependency)
+            try:
+                from backend.core.normalize import normalize_incoming_despatch
+            except ImportError:
+                # Fallback if backend is not in path
+                normalize_incoming_despatch = None
             
             # DespatchDocumentReference taglerini bul
             for despatch in root.findall('.//cac:DespatchDocumentReference', self.namespaces):
@@ -366,11 +374,16 @@ class IsbasiAPIIncomingInvoicesExtractor:
                     full_id = despatch_id.text.strip()
                     despatch_data['despatch_id_full'] = full_id
                     
-                    # Son 5 haneyi al (IRS2025000014740 -> 14740)
-                    if len(full_id) >= 5:
-                        despatch_data['despatch_id_short'] = full_id[-5:]
+                    # NEW: Supplier-based normalization (v2.2)
+                    if normalize_incoming_despatch and supplier:
+                        normalized_id = normalize_incoming_despatch(full_id, supplier)
+                        despatch_data['despatch_id_short'] = normalized_id or full_id[-5:] if len(full_id) >= 5 else full_id
                     else:
-                        despatch_data['despatch_id_short'] = full_id
+                        # Fallback: Son 5 haneyi al (IRS2025000014740 -> 14740)
+                        if len(full_id) >= 5:
+                            despatch_data['despatch_id_short'] = full_id[-5:]
+                        else:
+                            despatch_data['despatch_id_short'] = full_id
                 
                 # İrsaliye tarihi
                 despatch_date = despatch.find('.//cbc:IssueDate', self.namespaces)
@@ -503,8 +516,9 @@ class IsbasiAPIIncomingInvoicesExtractor:
                     # XML içeriğini çek
                     xml_content = self.fetch_invoice_xml_by_uuid(uuid)
                     if xml_content:
-                        # İrsaliye bilgilerini parse et
-                        despatch_docs = self.parse_despatch_documents_from_xml(xml_content)
+                        # İrsaliye bilgilerini parse et (supplier bilgisi ile)
+                        supplier = invoice.get('supplier', '')
+                        despatch_docs = self.parse_despatch_documents_from_xml(xml_content, supplier)
                         if despatch_docs:
                             # İrsaliye bilgilerini faturaya ekle
                             invoice['despatch_documents'] = despatch_docs

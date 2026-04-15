@@ -13,10 +13,9 @@ xlsxwriter>=3.1.0
 # API ve Web İstekleri
 requests>=2.31.0
 
-# PostgreSQL (opsiyonel - paralel write path)
-# NOT: Proje SQLite + Excel akışı için Postgres'a ihtiyaç duymaz.
-# Postgres'a yazmak isterseniz şu paketi ayrıca kurun:
-#   psycopg[binary]>=3.1.0
+# PostgreSQL (stateful ingestion için gerekli)
+# Backend agents için psycopg2-binary gerekli
+psycopg2-binary>=2.9.0
 
 # Veri İşleme
 # Not: Parser'lar şu an standart kütüphane `xml.etree.ElementTree` kullanıyor; lxml opsiyoneldir.

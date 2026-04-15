@@ -63,7 +63,7 @@ def _load_dotenv_if_present(dotenv_path: Path) -> None:
 _load_dotenv_if_present(project_root / ".env")
 
 # API Database modülünü import et
-from src.api.api_database import APIDatabase
+from archive.legacy_src.api_database import APIDatabase
 
 # Logging konfigürasyonu
 # Log dosyasını proje kök dizinine yerleştir
@@ -194,6 +194,8 @@ class IsbasiAPIDataExtractor:
         Description alanından SADECE banka bilgilerini temizler
         İrsaliye numaraları ve diğer bilgileri KORUR
         
+        NEW (v2.2): Uses backend.core.normalize.clean_description with fallback
+        
         Args:
             description: Temizlenecek açıklama metni
             
@@ -206,8 +208,15 @@ class IsbasiAPIDataExtractor:
         # String'e çevir
         desc = str(description)
         
-        # SADECE banka bilgisi içeren spesifik pattern'leri temizle
-        # ÇOK SPESİFİK - sadece kesin banka bilgilerini temizler
+        # NEW: Try to use backend normalize module (v2.2)
+        try:
+            from backend.core.normalize import clean_description
+            return clean_description(desc)
+        except ImportError:
+            # Fallback: Use old logic if backend not in path
+            pass
+        
+        # FALLBACK: Old logic (SADECE banka bilgisi içeren spesifik pattern'leri temizle)
         patterns_to_remove = [
             # Spesifik GARANTİBANK IBAN'ı (Excel format)
             r'Banka\s+Bilgileri\s*[:\s]*_x000D_\s*GARANTİBANK\s*-?\s*TR\s*35\s*0006\s*2001\s*1670\s*0006\s*2939\s*21\s*_x000D_',
@@ -233,6 +242,36 @@ class IsbasiAPIDataExtractor:
         desc = desc.strip()  # Başındaki ve sonundaki boşlukları temizle
         
         return desc
+    
+    @staticmethod
+    def extract_despatch_id_from_description(description: str) -> str:
+        """
+        Description'dan irsaliye kodunu çıkarır
+        
+        NEW (v2.2): Uses backend.core.normalize.extract_despatch_from_description
+        
+        Args:
+            description: Description metni
+            
+        Returns:
+            İrsaliye kodu (A-XXXX veya F-XXXX) veya boş string
+        """
+        if not description or pd.isna(description):
+            return ""
+        
+        # Try to use backend normalize module (v2.2)
+        try:
+            from backend.core.normalize import extract_despatch_from_description
+            result = extract_despatch_from_description(str(description))
+            return result if result else ""
+        except ImportError:
+            # Fallback: Simple regex extraction
+            import re
+            desc = str(description)
+            match = re.search(r'([AF])\s*[-/]\s*(\d{3,6})', desc, re.IGNORECASE)
+            if match:
+                return f"{match.group(1).upper()}-{match.group(2)}"
+            return ""
     
     def secure_login(self) -> bool:
         """
@@ -470,8 +509,8 @@ class IsbasiAPIDataExtractor:
                 if col in df.columns:
                     df[col] = df[col].astype(str)
             
-            # Sadece istenen 8 sütunu al (type eklendi)
-            required_columns = ['id', 'date', 'invoiceNumber', 'totalTL', 'taxableAmount', 'firmName', 'description', 'type']
+            # Sadece istenen sütunları al (type ve despatch_id eklendi - v2.2)
+            required_columns = ['id', 'date', 'invoiceNumber', 'totalTL', 'taxableAmount', 'firmName', 'description', 'despatch_id', 'type']
             available_columns = [col for col in required_columns if col in df.columns]
             
             if not available_columns:
@@ -487,6 +526,14 @@ class IsbasiAPIDataExtractor:
                     self.clean_bank_info_from_description
                 )
                 logger.info("✅ Banka bilgileri temizlendi")
+                
+                # NEW (v2.2): Extract despatch_id from description
+                logger.info("📦 İrsaliye kodları çıkarılıyor...")
+                df_filtered['despatch_id'] = df_filtered['description'].apply(
+                    self.extract_despatch_id_from_description
+                )
+                despatch_count = df_filtered['despatch_id'].astype(bool).sum()
+                logger.info(f"✅ {despatch_count} faturada irsaliye kodu bulundu")
             
             # Excel'e kaydet
             with pd.ExcelWriter(self.excel_files['invoices'], engine='xlsxwriter') as writer:

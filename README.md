@@ -7,7 +7,8 @@ Bu proje, API'den gönderilen faturaların description alanından irsaliye kodla
 - [Hızlı Başlangıç](#-hızlı-başlangıç)
 - [Sistem Mimarisi](#-sistem-mimarisi)
 - [Veri Akışı](#-veri-akışı)
-- [Kullanım Kılavuzu](#-kullanım-kılavuzu)
+- [Backend Agents (Stateful Postgres Ingestion)](#-backend-agents-stateful-postgres-ingestion)
+- [Proje Yapısı](#-proje-yapısı)
 - [Veritabanı Yapıları](#-veritabanı-yapıları)
 
 ---
@@ -24,7 +25,7 @@ pip install -r requirements.txt
 
 ```bash
 # Fatura eşleştirme raporunu oluştur
-python3 tools/invoice_matcher.py
+python3 scripts/tools/invoice_matcher.py
 ```
 
 **Çıktı:** `kayıtlar/Fatura_Eslesme_Raporu_YYYYMMDD_HHMMSS.xlsx`
@@ -81,14 +82,14 @@ python3 tools/invoice_matcher.py
 
 **AkGips XML'leri:**
 ```bash
-python3 src/parsers/akgips_parser.py
+python3 archive/legacy_src/parsers/akgips_parser.py
 ```
 - `data/xml/akgips/*.xml` → `data/db/akgips.db`
 - İrsaliye kodu formatı: `A-18356`
 
 **Fullboard XML'leri:**
 ```bash
-python3 src/parsers/fullboard_parser.py
+python3 archive/legacy_src/parsers/fullboard_parser.py
 ```
 - `data/xml/fullboard/*.xml` → `data/db/fullboard.db`
 - İrsaliye kodu formatı: `F-9171`
@@ -96,7 +97,7 @@ python3 src/parsers/fullboard_parser.py
 ### 2️⃣ API'den Giden Faturaları Çek
 
 ```bash
-python3 src/api/api_data_extractor.py
+python3 ingestion/api_data_extractor.py
 ```
 
 **Ne yapar:**
@@ -107,18 +108,18 @@ python3 src/api/api_data_extractor.py
 - Ek olarak API verilerini ayrı bir veritabanına da yazar: `data/db/api.db`
 - Description alanında irsaliye kodları bulunur
 
-**Not (GitHub):** `src/api/api_data_extractor.py` çalışması için `ISBASI_API_KEY` ve `ISBASI_USERNAME` ortam değişkenleri gerekir.
+**Not (GitHub):** `ingestion/api_data_extractor.py` çalışması için `ISBASI_API_KEY` ve `ISBASI_USERNAME` ortam değişkenleri gerekir.
 Örnek:
 ```bash
 cp env.example .env
 # sonra .env içini doldurun
-python3 src/api/api_data_extractor.py
+python3 ingestion/api_data_extractor.py
 ```
 
 ### 3️⃣ Fatura Eşleştirme Raporunu Oluştur
 
 ```bash
-python3 tools/invoice_matcher.py
+python3 scripts/tools/invoice_matcher.py
 ```
 
 **İşlem Adımları:**
@@ -136,7 +137,69 @@ python3 tools/invoice_matcher.py
 - Tutar farkları ve KDV hesaplamaları
 - İstatistik özeti
 
-**Detaylı dokümantasyon:** `tools/README_invoice_matcher.md`
+**Detaylı dokümantasyon:** `scripts/tools/README_invoice_matcher.md`
+
+---
+
+## 🤖 Backend Agents (Stateful Postgres Ingestion)
+
+**Yeni!** API verilerini Postgres'e stateful (durum takipli) olarak aktaran agent'lar:
+
+### Özellikler
+- ✅ **Stateful Ingestion**: Her agent son işlediği `issue_date`'i takip eder
+- ✅ **Incremental Updates**: Sadece yeni/değişen faturalar işlenir
+- ✅ **Change Detection**: Row hash ile değişiklikler tespit edilir
+- ✅ **İrsaliye Normalizasyonu**: Otomatik IRS-XXXXX formatına çevirir
+- ✅ **Upsert Logic**: Yoksa insert, varsa (değiştiyse) update
+
+### Kurulum
+
+```bash
+# 1. PostgreSQL kur ve database oluştur
+createdb invoices
+
+# 2. Schema'yı migrate et
+psql invoices < sql/stateful_ingestion_schema_v2.sql
+
+# 3. .env dosyasını yapılandır
+cp env.example .env
+# DB_URL=postgresql://user:password@localhost:5432/invoices ekle
+
+# 4. Python paketlerini kur
+pip install -r requirements.txt
+```
+
+### Kullanım
+
+```bash
+# Gelen fatura agent'ı (incoming invoices)
+python backend/agents/incoming_agent.py
+
+# Giden fatura agent'ı (outgoing invoices)
+python backend/agents/outgoing_agent.py
+```
+
+### Çıktı Örneği
+
+```
+🚀 INCOMING INVOICE AGENT STARTING
+============================================================
+📅 Fetching invoices from 2026-01-01 to 2026-02-10
+✅ Fetched 156 invoices from API
+============================================================
+📊 INCOMING INVOICE AGENT RESULTS
+============================================================
+✅ Inserted: 150
+🔄 Updated: 6
+⚪ Unchanged: 0
+📅 Max issue_date: 2026-02-10
+============================================================
+```
+
+**Detaylı dokümantasyon:**
+- `backend/README.md` - Agent kullanım kılavuzu
+- `docs/V2_PRODUCTION_READY.md` - v2.0 sistem özeti
+- `PROJECT_STRUCTURE.md` - Proje yapısı detayları
 
 ---
 
@@ -175,35 +238,70 @@ CREATE TABLE despatch_documents (
 
 ## 📁 Proje Yapısı
 
+**Yeni yapı:** v2.1.1 (Temiz ve organize edilmiş)
+
 ```
 gelen efaturalar deneme/
-├── tools/
-│   ├── invoice_matcher.py          ⭐ Ana eşleştirme aracı
-│   └── README_invoice_matcher.md   📖 Detaylı dokümantasyon
-├── src/
-│   ├── api/
-│   │   ├── api_data_extractor.py   🌐 API'den veri çekme
-│   │   └── api_database.py         💾 API DB yönetimi
-│   └── parsers/
-│       ├── akgips_parser.py        🔧 AkGips XML parser
-│       └── fullboard_parser.py     🔧 Fullboard XML parser
-├── data/
-│   ├── db/
-│   │   ├── akgips.db              💾 AkGips veritabanı
-│   │   └── fullboard.db           💾 Fullboard veritabanı
-│   ├── excel/
-│   │   └── api/
-│   │       └── API_Giden_Faturalar.xlsx  📊 Giden faturalar
-│   ├── logs/
-│   │   └── api_extraction.log     📝 API işlem logları
-│   └── xml/
-│       ├── akgips/                📄 AkGips XML dosyaları (79 adet)
-│       └── fullboard/             📄 Fullboard XML dosyaları (282 adet)
-├── kayıtlar/
-│   └── Fatura_Eslesme_Raporu_*.xlsx  📈 Eşleştirme raporları
-├── requirements.txt               📦 Python bağımlılıkları
-└── README.md                      📖 Bu dosya
+├── backend/                       🤖 Production ingestion system
+│   ├── core/                      Core utilities
+│   │   ├── config.py             ⚙️ Configuration management
+│   │   ├── db.py                 💾 Database helpers (psycopg2)
+│   │   ├── agent_state.py        📅 Agent state tracking
+│   │   ├── normalize.py          🔧 İrsaliye normalization
+│   │   └── agent_run_logger.py   📊 Run history logging
+│   ├── agents/                    Agent implementations
+│   │   ├── incoming_agent.py     📥 Gelen fatura ingestion
+│   │   └── outgoing_agent.py     📤 Giden fatura ingestion
+│   └── README.md                 📖 Agent documentation
+│
+├── ingestion/                     🌐 API extractors (v2.0+)
+│   ├── api_data_extractor.py     Outgoing invoice extractor
+│   └── api_incoming_invoices_extractor.py  Incoming invoice extractor
+│
+├── sql/                           💾 Database schemas
+│   ├── stateful_ingestion_schema_v2.sql  Current schema (v2.1.1)
+│   ├── stateful_ingestion_schema.sql     Legacy v1.0
+│   └── postgres_schema.sql               Original schema
+│
+├── scripts/                       🛠️ Utilities and tools
+│   ├── agent_monitor.py          CLI monitoring tool
+│   ├── setup_postgres.sh         Database setup
+│   ├── verify_installation.py    Installation check
+│   └── tools/                    Additional tools
+│       ├── invoice_matcher.py    ⭐ Invoice matcher
+│       └── README_invoice_matcher.md
+│
+├── docs/                          📚 All documentation
+│   ├── V2_PRODUCTION_READY.md    Main v2.0 docs
+│   ├── ADVANCED_MONITORING.md    v2.1.1 monitoring
+│   ├── AGENT_RUN_LOGGING.md      v2.1.0 logging
+│   ├── TRANSACTION_PER_BATCH.md  v2.0.1 transactions
+│   └── ... (changelogs, etc.)
+│
+├── archive/                       📦 Legacy code (preserved)
+│   └── legacy_src/               Old src/ folder
+│       ├── api_database.py       Old DB wrapper
+│       ├── db/                   Old DB utilities
+│       └── parsers/              Old XML parsers
+│           ├── akgips_parser.py
+│           └── fullboard_parser.py
+│
+├── data/                          📊 Data files (not in repo)
+│   ├── db/                       SQLite databases
+│   ├── excel/                    Excel exports
+│   ├── xml/                      XML invoices
+│   └── logs/                     Log files
+│
+├── kayıtlar/                      📈 Matching reports
+├── .env                           ⚙️ Environment config (not in repo)
+├── env.example                    ⚙️ Example config
+├── requirements.txt               📦 Dependencies
+├── README.md                      📖 This file
+├── QUICKSTART.md                  🚀 Quick start guide
+└── PROJECT_STRUCTURE.md           📁 Detailed structure docs
 ```
+
+**Detaylı bilgi:** `PROJECT_STRUCTURE.md`
 
 ---
 
@@ -263,16 +361,20 @@ XML dosyaları güncellendiğinde:
 # 1. Eski DB'leri sil
 rm -f data/db/akgips.db data/db/fullboard.db
 
-# 2. Yeniden parse et
-python3 src/parsers/akgips_parser.py
-python3 src/parsers/fullboard_parser.py
+# 2. Yeniden parse et (legacy)
+python3 archive/legacy_src/parsers/akgips_parser.py
+python3 archive/legacy_src/parsers/fullboard_parser.py
 ```
 
 ### API Verileri Güncelleme
 
 Giden faturaları güncellemek için:
 ```bash
-python3 src/api/api_data_extractor.py
+# Legacy extractor (eski yöntem)
+python3 ingestion/api_data_extractor.py
+
+# Modern agent (önerilen - v2.0+)
+python3 backend/agents/outgoing_agent.py
 ```
 
 ---
@@ -285,7 +387,7 @@ python3 src/api/api_data_extractor.py
 ls -l data/excel/api/API_Giden_Faturalar.xlsx
 
 # Yoksa API'den çekin
-python3 src/api/api_data_extractor.py
+python3 ingestion/api_data_extractor.py
 ```
 
 ### "Veritabanı bulunamadı"
@@ -293,9 +395,9 @@ python3 src/api/api_data_extractor.py
 # Veritabanlarını kontrol edin
 ls -l data/db/akgips.db data/db/fullboard.db
 
-# Yoksa XML'leri parse edin
-python3 src/parsers/akgips_parser.py
-python3 src/parsers/fullboard_parser.py
+# Yoksa XML'leri parse edin (legacy)
+python3 archive/legacy_src/parsers/akgips_parser.py
+python3 archive/legacy_src/parsers/fullboard_parser.py
 ```
 
 ### Boş Eşleşme Sonuçları
@@ -322,4 +424,23 @@ Bu proje dahili kullanım için geliştirilmiştir.
 
 ---
 
-**Son Güncelleme:** 2 Ocak 2026
+**Son Güncelleme:** 10 Şubat 2026
+
+### Yeni Özellikler (v2.1.1)
+- 🤖 Backend agents: Stateful Postgres ingestion
+- 📅 Agent state tracking (incremental updates)
+- 🔄 Change detection with row hashing
+- 🔧 İrsaliye code normalization (IRS-XXXXX)
+- ⚡ Upsert logic (insert/update)
+- 📊 Agent run logging (v2.1.0)
+- 🖥️ Advanced monitoring: host/version/batch tracking (v2.1.1)
+- 🔒 Transaction-per-batch safety (v2.0.1)
+
+**Proje yapısı temizlendi (v2.1.1):**
+- ✅ `backend/` - Production code
+- ✅ `ingestion/` - API extractors
+- ✅ `docs/` - All documentation
+- ✅ `archive/` - Legacy code preserved
+- ✅ `scripts/` - Utilities organized
+
+Detaylı değişiklik listesi: `docs/CHANGELOG_v2.1.1.md`
