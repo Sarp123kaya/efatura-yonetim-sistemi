@@ -92,6 +92,19 @@ Giden faturaların irsaliye kodları (`irsaliye_codes`) ile gelen faturaların i
 
 Raporda fark tutarları ve istatistik özeti de yer alır. Çıktı: `kayıtlar/Fatura_Eslestirme_YYYYMMDD_HHMMSS.xlsx`
 
+### Ters Eşleştirme: Gelen -> Giden Kontrol
+
+```bash
+python3 scripts/pg_reverse_matcher.py
+```
+
+Yukarıdaki eşleştirmenin tam tersi: **gelen faturaları** başlangıç noktası alır, her gelen faturanın irsaliye kodunu giden faturalarda arar. Karşılıksız gelen faturaları tespit eder. Renk kodlu Excel raporu üretir:
+- **Yeşil**: Giden faturada karşılığı bulunan
+- **Kırmızı**: Karşılıksız (gelen var ama giden yok)
+- **Sarı**: İrsaliye kodu olmayan gelen faturalar
+
+Çıktı: `kayıtlar/Ters_Eslestirme_YYYYMMDD_HHMMSS.xlsx`
+
 ---
 
 ## Fabrikalar Sayfası
