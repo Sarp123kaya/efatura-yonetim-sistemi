@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pandas as pd
 from datetime import datetime
 from backend.core.db import db
+from backend.core.incoming_xml_cache import ensure_xml_cache_schema
 
 PREFIX_TO_SUPPLIER = {
     'A': 'AK',
@@ -59,6 +60,8 @@ def build_incoming_index(incoming_rows):
 
 
 def get_matching_data():
+    ensure_xml_cache_schema()
+
     outgoing_rows = db.query("""
         SELECT id, invoice_no, issue_date, firm_name,
                total_tl, taxable_amount, description,
@@ -68,9 +71,10 @@ def get_matching_data():
     """)
 
     incoming_rows = db.query("""
-        SELECT invoice_id, issue_date, supplier, amount, currency, despatch_ids
+        SELECT invoice_id, issue_date, supplier, amount, currency,
+               COALESCE(despatch_ids_override, despatch_ids) AS despatch_ids
         FROM incoming_invoices
-        WHERE jsonb_array_length(despatch_ids) > 0
+        WHERE jsonb_array_length(COALESCE(despatch_ids_override, despatch_ids)) > 0
     """)
 
     incoming_index = build_incoming_index(incoming_rows)

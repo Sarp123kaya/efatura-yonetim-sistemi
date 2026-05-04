@@ -10,6 +10,33 @@ Projedeki tüm çalıştırılabilir komutların referans rehberi.
 
 Bu komutlar İşbaşı API'sine bağlanıp faturaları PostgreSQL veritabanına kaydeder. Çalıştırıldığında API şifresi sorulur.
 
+### Tek Komut: Çek, DB'ye Aktar, Eşleştir ve Excel Üret
+
+```bash
+python3 scripts/run_invoice_pipeline.py
+```
+
+Sırasıyla gelen faturaları çeker, giden faturaları çeker, ikisini PostgreSQL'e aktarır ve eşleştirme Excel raporunu oluşturur. Varsayılan çıktı: `kayıtlar/Fatura_Eslestirme_YYYYMMDD_HHMMSS.xlsx`
+
+Opsiyonel kullanım:
+
+```bash
+# Belirli tarih aralığı için çalıştır
+python3 scripts/run_invoice_pipeline.py --start-date 2026-01-01 --end-date 2026-01-31
+
+# Mevcut DB verisiyle sadece eşleştirme Excel'i üret
+python3 scripts/run_invoice_pipeline.py --skip-ingest
+
+# Giden -> gelen raporuna ek olarak gelen -> giden ters kontrol raporu da üret
+python3 scripts/run_invoice_pipeline.py --include-reverse
+
+# Normalde eski XML'leri cache'ten kullanır. Gerekirse tüm gelen XML'leri yeniden çek
+python3 scripts/run_invoice_pipeline.py --refresh-xml
+
+# Çıktı klasörünü değiştir
+python3 scripts/run_invoice_pipeline.py --output-dir rapor_ciktilari
+```
+
 ### Gelen Faturaları Çek
 
 ```bash
@@ -65,6 +92,24 @@ python3 scripts/export_to_excel.py --type outgoing
 
 ```bash
 python3 scripts/export_to_excel.py --type runs
+```
+
+### AK GİPS ve FULLBOARD Ürün Detay Excel'lerini Oluştur
+
+```bash
+python3 scripts/export_supplier_invoice_details.py
+```
+
+Gelen fatura kayıtlarını tedarikçiye göre filtreler ve cache'lenmiş fatura XML'lerinden ürün satırlarını okur. İki ayrı Excel dosyası oluşturur:
+- `kayıtlar/AK_GIPS_Fabrikasi_YYYYMMDD_HHMMSS.xlsx`
+- `kayıtlar/FULLBOARD_Fabrikasi_YYYYMMDD_HHMMSS.xlsx`
+
+Her dosyada ilk sayfa `Fatura Detayları` sayfasıdır; fatura bilgileriyle birlikte giden müşteri, giden müşteri fiyatı, irsaliye açıklaması, ürün adı, ürün kodu, miktar, birim, birim fiyat, KDV dahil birim fiyat, torba kg, torba alış fiyatı, satır tutarı ve KDV oranını gösterir. Makine sıva/perlitli sıva gibi 35 kg ürünlerde `=(Birim Fiyat*35)/1000`, saten alçı gibi 25 kg ürünlerde `=(Birim Fiyat*25)/1000` formülü otomatik yazılır. `Fatura Özeti` sayfası fatura bazında ürün satır toplamı ile KDV matrahını karşılaştırır. FULLBOARD dosyasında ayrıca `Pivot Özet` sayfası oluşturulur; giden müşteri, ürün, açıklama ve irsaliye açıklamasına göre toplam KDV dahil birim fiyat ve toplam birim fiyatı gösterir.
+
+Not: Ürün/adet/birim fiyat kolonlarının dolması için `incoming_invoice_xml_cache` tablosunda fatura XML içerikleri bulunmalıdır. Cache boşsa önce API şifresiyle şu komut çalıştırılabilir:
+
+```bash
+python3 scripts/run_invoice_pipeline.py --start-date 2026-01-01 --refresh-xml
 ```
 
 ### Çıktı Klasörünü Değiştir
@@ -327,9 +372,10 @@ createdb invoices
 psql postgresql://sp383@localhost:5432/invoices -f sql/stateful_ingestion_schema_v2.sql
 psql postgresql://sp383@localhost:5432/invoices -f sql/migration_v2.2_despatch_improvements.sql
 psql postgresql://sp383@localhost:5432/invoices -f sql/migration_irsaliye_override.sql
+psql postgresql://sp383@localhost:5432/invoices -f sql/migration_incoming_xml_cache.sql
 ```
 
-Sırasıyla: veritabanını oluşturur, ana schema'yı uygular (4 tablo), v2.2 despatch iyileştirmelerini uygular, irsaliye override kolonunu ekler.
+Sırasıyla: veritabanını oluşturur, ana schema'yı uygular (4 tablo), v2.2 despatch iyileştirmelerini uygular, irsaliye override kolonunu ve gelen XML cache tablosunu ekler.
 
 ### Otomatik Veritabanı Kurulumu
 
@@ -366,6 +412,9 @@ crontab -e
 ### Örnek Cron Tanımları
 
 ```cron
+# Her gün saat 04:00'de tek komutla faturaları çek, DB'ye aktar ve eşleştirme Excel'i üret
+0 4 * * * cd "/Users/sp383/Desktop/gelen efaturalar deneme kopyası" && /usr/bin/python3 scripts/run_invoice_pipeline.py >> /tmp/invoice_pipeline.log 2>&1
+
 # Her gün saat 02:00'de gelen faturaları çek
 0 2 * * * cd "/Users/sp383/Desktop/gelen efaturalar deneme kopyası" && /usr/bin/python3 backend/agents/incoming_agent.py >> /tmp/incoming_agent.log 2>&1
 
@@ -391,6 +440,7 @@ tail -f /tmp/outgoing_agent.log
 
 | Ne Yapmak İstiyorsun? | Komut |
 |------------------------|-------|
+| Tek komutla çek, aktar, eşleştir, Excel üret | `python3 scripts/run_invoice_pipeline.py` |
 | Gelen faturaları çek | `python3 backend/agents/incoming_agent.py` |
 | Giden faturaları çek | `python3 backend/agents/outgoing_agent.py` |
 | Excel'e aktar | `python3 scripts/export_to_excel.py --type all` |

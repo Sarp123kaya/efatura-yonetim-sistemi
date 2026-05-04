@@ -66,6 +66,7 @@ _load_dotenv_if_present(project_root / ".env")
 
 # API Database modülünü import et
 from archive.legacy_src.api_database import APIDatabase
+from backend.core.incoming_xml_cache import ensure_xml_cache_schema, get_cached_xml, upsert_xml_cache
 
 # Logging konfigürasyonu
 log_file = project_root / "data" / "logs" / "api_incoming_extraction.log"
@@ -89,9 +90,16 @@ class IsbasiAPIIncomingInvoicesExtractor:
     API bağlantısı, veri çekme, sayfalama ve Excel kaydetme işlemlerini yönetir.
     """
     
-    def __init__(self):
+    def __init__(self, refresh_xml_cache: bool = False):
         """API extractor sınıfını başlatır"""
         self.session = requests.Session()
+        self.refresh_xml_cache = refresh_xml_cache
+        self.xml_cache_stats = {
+            'hit': 0,
+            'miss': 0,
+            'refreshed': 0,
+            'failed': 0,
+        }
         self.base_url = os.getenv("ISBASI_BASE_URL", "https://mw-jplatform.isbasi.com").rstrip("/")
         self.api_key = os.getenv("ISBASI_API_KEY")
         self.username = os.getenv("ISBASI_USERNAME")
@@ -167,6 +175,7 @@ class IsbasiAPIIncomingInvoicesExtractor:
         # API veritabanı
         self.api_db = APIDatabase()
         self.db_path = self.api_db.db_path
+        ensure_xml_cache_schema()
         
         # Sayfalama parametreleri
         self.pagination_config = {
@@ -185,6 +194,8 @@ class IsbasiAPIIncomingInvoicesExtractor:
         logger.info("API Gelen Fatura Extractor başlatıldı")
         logger.info(f"Hedef veritabanı: {self.db_path}")
         logger.info(f"Fatura tipi: Sadece GELEN faturalar (irsaliye bilgileriyle)")
+        if self.refresh_xml_cache:
+            logger.info("XML cache refresh modu aktif: mevcut cache olsa bile XML yeniden çekilecek")
     
     def secure_login(self) -> bool:
         """
@@ -402,6 +413,33 @@ class IsbasiAPIIncomingInvoicesExtractor:
             logger.error(f"XML parse hatası: {e}")
         
         return despatch_documents
+
+    def _attach_despatch_to_invoice(self, invoice: Dict, despatch_docs: List[Dict]) -> int:
+        """Attach parsed despatch data to the invoice payload used by the agent."""
+        if not despatch_docs:
+            return 0
+
+        invoice['despatch_documents'] = despatch_docs
+        despatch_ids = [
+            d.get('despatch_id_short', '')
+            for d in despatch_docs
+            if d.get('despatch_id_short')
+        ]
+        invoice['despatch_ids_summary'] = ', '.join(despatch_ids)
+        return len(despatch_docs)
+
+    def _attach_cached_despatch_to_invoice(self, invoice: Dict, cached: Dict) -> int:
+        """Attach cached despatch parse results without refetching XML."""
+        despatch_docs = cached.get('despatch_documents') or []
+        if despatch_docs:
+            return self._attach_despatch_to_invoice(invoice, despatch_docs)
+
+        despatch_ids = cached.get('despatch_ids') or []
+        if despatch_ids:
+            invoice['despatch_ids_summary'] = ', '.join(str(d) for d in despatch_ids)
+            return len(despatch_ids)
+
+        return 0
     
     def fetch_incoming_invoices_with_pagination(self) -> Tuple[bool, List[Dict]]:
         """
@@ -504,34 +542,61 @@ class IsbasiAPIIncomingInvoicesExtractor:
             if total_count > 0:
                 print(f"   ℹ️  API toplam kayıt sayısı: {total_count}")
             
-            # Her fatura için XML içeriğinden irsaliye bilgilerini çek
-            print(f"\n📦 İrsaliye bilgileri çekiliyor...")
+            # Her fatura için XML içeriğinden irsaliye bilgilerini çek/cache'ten kullan
+            print(f"\n📦 İrsaliye bilgileri çekiliyor/cache kontrol ediliyor...")
             despatch_count = 0
             for idx, invoice in enumerate(all_data, 1):
                 uuid = invoice.get('uuId')
                 if uuid:
                     if idx % 10 == 0:  # Her 10 faturada bir progress göster
                         print(f"   ⏳ {idx}/{len(all_data)} fatura işlendi...")
-                    
-                    # XML içeriğini çek
+
+                    cached = None if self.refresh_xml_cache else get_cached_xml(uuid)
+                    if cached:
+                        despatch_count += self._attach_cached_despatch_to_invoice(invoice, cached)
+                        self.xml_cache_stats['hit'] += 1
+                        continue
+
+                    self.xml_cache_stats['miss'] += 1
+
+                    # Cache yoksa veya refresh istenmişse XML içeriğini çek
                     xml_content = self.fetch_invoice_xml_by_uuid(uuid)
                     if xml_content:
                         # İrsaliye bilgilerini parse et (supplier bilgisi ile)
                         supplier = invoice.get('supplier', '')
+                        invoice_id = invoice.get('invoiceId', '')
                         despatch_docs = self.parse_despatch_documents_from_xml(xml_content, supplier)
-                        if despatch_docs:
-                            # İrsaliye bilgilerini faturaya ekle
-                            invoice['despatch_documents'] = despatch_docs
-                            despatch_count += len(despatch_docs)
-                            
-                            # İrsaliye numaralarını virgülle ayrılmış string olarak da ekle
-                            despatch_ids = ', '.join([d.get('despatch_id_short', '') for d in despatch_docs if d.get('despatch_id_short')])
-                            invoice['despatch_ids_summary'] = despatch_ids
-                    
+                        despatch_count += self._attach_despatch_to_invoice(invoice, despatch_docs)
+
+                        despatch_ids = [
+                            d.get('despatch_id_short', '')
+                            for d in despatch_docs
+                            if d.get('despatch_id_short')
+                        ]
+                        upsert_xml_cache(
+                            uuid=uuid,
+                            invoice_id=invoice_id,
+                            supplier=supplier,
+                            xml_content=xml_content,
+                            despatch_documents=despatch_docs,
+                            despatch_ids=despatch_ids,
+                        )
+                        if self.refresh_xml_cache:
+                            self.xml_cache_stats['refreshed'] += 1
+                    else:
+                        self.xml_cache_stats['failed'] += 1
+
                     # Rate limiting
                     time.sleep(0.3)  # Her XML çekme arasında 300ms bekle
             
             print(f"✅ İrsaliye bilgileri tamamlandı: {despatch_count} irsaliye bulundu")
+            print(
+                "   XML cache: "
+                f"{self.xml_cache_stats['hit']} hit, "
+                f"{self.xml_cache_stats['miss']} miss, "
+                f"{self.xml_cache_stats['refreshed']} refresh, "
+                f"{self.xml_cache_stats['failed']} hata"
+            )
             return True, all_data
             
         except Exception as e:

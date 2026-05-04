@@ -18,6 +18,7 @@ import json
 import hashlib
 import time
 import uuid as uuid_lib
+import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -45,9 +46,10 @@ logger = logging.getLogger(__name__)
 class IncomingInvoiceAgent:
     """Production-ready incoming invoice ingestion agent"""
     
-    def __init__(self, run_id: Optional[str] = None):
+    def __init__(self, run_id: Optional[str] = None, refresh_xml_cache: bool = False):
         self.run_id = run_id or f"incoming_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid_lib.uuid4().hex[:8]}"
         self.agent_name = 'incoming_agent'
+        self.refresh_xml_cache = refresh_xml_cache
         self.stats = {
             'insert': 0,
             'update': 0,
@@ -243,7 +245,8 @@ class IncomingInvoiceAgent:
         # Log run start to database
         metadata = {
             'start_date': start_date.isoformat() if start_date else None,
-            'end_date': end_date.isoformat() if end_date else None
+            'end_date': end_date.isoformat() if end_date else None,
+            'refresh_xml_cache': self.refresh_xml_cache
         }
         self.run_logger.start_run(metadata=metadata)
         
@@ -268,7 +271,7 @@ class IncomingInvoiceAgent:
             
             # Initialize extractor with non-interactive auth
             logger.info("🔧 Initializing API extractor...")
-            extractor = IsbasiAPIIncomingInvoicesExtractor()
+            extractor = IsbasiAPIIncomingInvoicesExtractor(refresh_xml_cache=self.refresh_xml_cache)
             
             # Override password if in .env (non-interactive mode)
             if config.ISBASI_PASSWORD:
@@ -425,8 +428,16 @@ class IncomingInvoiceAgent:
 
 def main():
     """Main entry point"""
+    parser = argparse.ArgumentParser(description='Run incoming invoice ingestion agent')
+    parser.add_argument(
+        '--refresh-xml',
+        action='store_true',
+        help='Cache olsa bile gelen fatura XML içeriklerini yeniden çek'
+    )
+    args = parser.parse_args()
+
     try:
-        agent = IncomingInvoiceAgent()
+        agent = IncomingInvoiceAgent(refresh_xml_cache=args.refresh_xml)
         agent.run()
     except KeyboardInterrupt:
         logger.info("\n❌ Agent interrupted by user")

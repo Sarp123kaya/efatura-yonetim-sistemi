@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pandas as pd
 from datetime import datetime
 from backend.core.db import db
+from backend.core.incoming_xml_cache import ensure_xml_cache_schema
 
 SUPPLIER_TO_PREFIX = {
     'AK': 'A',
@@ -56,8 +57,11 @@ def build_outgoing_index(outgoing_rows):
 
 
 def get_reverse_matching_data():
+    ensure_xml_cache_schema()
+
     incoming_rows = db.query("""
-        SELECT invoice_id, issue_date, supplier, amount, currency, despatch_ids
+        SELECT invoice_id, issue_date, supplier, amount, currency,
+               COALESCE(despatch_ids_override, despatch_ids) AS despatch_ids
         FROM incoming_invoices
         ORDER BY issue_date ASC
     """)
