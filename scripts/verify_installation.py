@@ -102,27 +102,30 @@ def test_normalization():
         from backend.core.normalize import (
             extract_irsaliye_codes_from_description,
             normalize_despatch_ids_from_incoming,
-            extract_despatch_ids_from_summary
+            extract_despatch_ids_from_summary,
+            normalize_incoming_despatch,
         )
         
         # Test 1: Extract from description (A/F format)
         desc = "İRSALİYE NO: A-09170 / F-14740"
         codes = extract_irsaliye_codes_from_description(desc)
-        expected = ["IRS-09170", "IRS-14740"]
+        expected = ["A-09170", "F-14740"]
         if codes == expected:
             print(f"  ✅ extract_irsaliye_codes (A/F): {codes}")
         else:
             print(f"  ❌ extract_irsaliye_codes (A/F): got {codes}, expected {expected}")
             return False
         
-        # Test 1b: Extract IRS format (NEW in v2.0)
-        desc_irs = "IRS-14740, IRS14750, IRS 14760"
-        codes_irs = extract_irsaliye_codes_from_description(desc_irs)
-        expected_irs = ["IRS-14740", "IRS-14750", "IRS-14760"]
-        if codes_irs == expected_irs:
-            print(f"  ✅ extract_irsaliye_codes (IRS): {codes_irs}")
+        # Test 1b: Supplier-aware incoming normalization (v2.2)
+        incoming_code = normalize_incoming_despatch("IRS2025000014740", "AK GİPS")
+        expected_incoming = "A-14740"
+        if incoming_code == expected_incoming:
+            print(f"  ✅ normalize_incoming_despatch (supplier-aware): {incoming_code}")
         else:
-            print(f"  ❌ extract_irsaliye_codes (IRS): got {codes_irs}, expected {expected_irs}")
+            print(
+                "  ❌ normalize_incoming_despatch (supplier-aware): "
+                f"got {incoming_code}, expected {expected_incoming}"
+            )
             return False
         
         # Test 2: Normalize incoming despatch IDs
@@ -173,7 +176,11 @@ def test_database_connection():
                 return True
             except Exception as e:
                 print(f"  ⚠️  Could not query agent_state: {e}")
-                print("     Run: psql <db_url> < sql/stateful_ingestion_schema.sql")
+                print("     Run migrations in this order:")
+                print("       psql <db_url> -f sql/stateful_ingestion_schema_v2.sql")
+                print("       psql <db_url> -f sql/migration_v2.2_despatch_improvements.sql")
+                print("       psql <db_url> -f sql/migration_irsaliye_override.sql")
+                print("       psql <db_url> -f sql/migration_incoming_xml_cache.sql")
                 return True  # Don't fail if schema not applied yet
         else:
             print("  ⚠️  Database connection failed (configure DB_URL in .env)")
@@ -230,10 +237,14 @@ def main():
         print("   - ISBASI_API_KEY=xxx")
         print("   - ISBASI_USERNAME=xxx")
         print("   - ISBASI_PASSWORD=xxx  # For non-interactive")
-        print("2. Migrate schema: psql invoices < sql/stateful_ingestion_schema_v2.sql")
-        print("3. Run agents (non-interactive with .env password):")
-        print("   - python backend/agents/incoming_agent.py")
-        print("   - python backend/agents/outgoing_agent.py")
+        print("2. Migrate schema:")
+        print("   - python3 scripts/setup_postgres.sh")
+        print("3. First full run with XML cache:")
+        print("   - python3 scripts/run_invoice_pipeline.py --start-date 2026-01-01 --refresh-xml")
+        print("4. Regular updates:")
+        print("   - python3 scripts/run_invoice_pipeline.py")
+        print("5. Supplier detail Excel exports:")
+        print("   - python3 scripts/export_supplier_invoice_details.py")
         print()
         print("New in v2.0:")
         print("  • Lookback/watermark (2-day default)")

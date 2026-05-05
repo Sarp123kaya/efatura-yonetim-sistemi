@@ -96,17 +96,23 @@ postgresql://username:password@host:port/database
 ### Manuel Setup
 
 ```bash
-# Schema'yı uygula
-psql "postgresql://user:password@localhost:5432/invoices" < sql/stateful_ingestion_schema.sql
+# Schema ve migration'ları uygula
+export DB_URL="postgresql://user:password@localhost:5432/invoices"
+psql "$DB_URL" -f sql/stateful_ingestion_schema_v2.sql
+psql "$DB_URL" -f sql/migration_v2.2_despatch_improvements.sql
+psql "$DB_URL" -f sql/migration_irsaliye_override.sql
+psql "$DB_URL" -f sql/migration_incoming_xml_cache.sql
 
 # Doğrulama
-psql "postgresql://user:password@localhost:5432/invoices" -c "\dt"
+psql "$DB_URL" -c "\dt"
 ```
 
 **Beklenen tablolar:**
 - `agent_state`
 - `incoming_invoices`
 - `outgoing_invoices`
+- `incoming_invoice_xml_cache`
+- `agent_runs`
 
 ---
 

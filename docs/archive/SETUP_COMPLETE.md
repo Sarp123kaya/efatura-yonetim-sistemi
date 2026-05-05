@@ -204,4 +204,4 @@ Enter your API password when prompted, and watch the data flow in! 🚀
 
 **Setup By:** Database automation  
 **Ready For:** Data ingestion  
-**Docs:** See README.md, QUICKSTART.md, PROJECT_STRUCTURE.md
+**Docs:** See README.md, QUICKSTART.md, docs/PROJECT_STRUCTURE.md

@@ -16,7 +16,7 @@ Bu komutlar İşbaşı API'sine bağlanıp faturaları PostgreSQL veritabanına 
 python3 scripts/run_invoice_pipeline.py
 ```
 
-Sırasıyla gelen faturaları çeker, giden faturaları çeker, ikisini PostgreSQL'e aktarır ve eşleştirme Excel raporunu oluşturur. Varsayılan çıktı: `kayıtlar/Fatura_Eslestirme_YYYYMMDD_HHMMSS.xlsx`
+Sırasıyla gelen faturaları çeker, giden faturaları çeker, ikisini PostgreSQL'e aktarır ve hem normal eşleştirme hem ters eşleştirme Excel raporlarını oluşturur. Varsayılan çıktılar: `kayıtlar/Fatura_Eslestirme_YYYYMMDD_HHMMSS.xlsx` ve `kayıtlar/Ters_Eslestirme_YYYYMMDD_HHMMSS.xlsx`
 
 Opsiyonel kullanım:
 
@@ -27,8 +27,8 @@ python3 scripts/run_invoice_pipeline.py --start-date 2026-01-01 --end-date 2026-
 # Mevcut DB verisiyle sadece eşleştirme Excel'i üret
 python3 scripts/run_invoice_pipeline.py --skip-ingest
 
-# Giden -> gelen raporuna ek olarak gelen -> giden ters kontrol raporu da üret
-python3 scripts/run_invoice_pipeline.py --include-reverse
+# Sadece normal eşleştirme raporunu üret, ters kontrolü atla
+python3 scripts/run_invoice_pipeline.py --skip-reverse
 
 # Normalde eski XML'leri cache'ten kullanır. Gerekirse tüm gelen XML'leri yeniden çek
 python3 scripts/run_invoice_pipeline.py --refresh-xml
@@ -227,7 +227,7 @@ Extracted, override ve kullanılan (effective) irsaliye kodlarını gösterir.
 ### Eski Eşleştirme (SQLite + Excel Tabanlı)
 
 ```bash
-python3 scripts/tools/invoice_matcher.py
+python3 archive/legacy_tools/invoice_matcher.py
 ```
 
 Eski sistemle çalışır: `data/excel/api/API_Giden_Faturalar.xlsx` dosyasından giden faturaları, `data/db/akgips.db` ve `data/db/fullboard.db` SQLite veritabanlarından gelen faturaları okur. PostgreSQL yerine dosya tabanlı eşleştirme yapar. Yeni sistem kurulduktan sonra `pg_invoice_matcher.py` tercih edilmelidir.

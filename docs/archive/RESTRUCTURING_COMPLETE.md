@@ -70,7 +70,7 @@ gelen-efaturalar-deneme-kopyasi/
 ├── requirements.txt    ✅ Dependencies
 ├── README.md           ✅ Main docs
 ├── QUICKSTART.md       ✅ Quick start
-└── PROJECT_STRUCTURE.md ✅ Structure guide
+└── docs/PROJECT_STRUCTURE.md ✅ Structure guide
 ```
 
 **No other top-level code folders!** ✅
@@ -116,19 +116,19 @@ __version__ = "2.1.1"
 ### Updated Files
 
 1. **README.md** - All file paths updated to new structure
-   - `tools/invoice_matcher.py` → `scripts/tools/invoice_matcher.py`
+   - `tools/invoice_matcher.py` → `archive/legacy_tools/invoice_matcher.py`
    - `src/api/api_data_extractor.py` → `ingestion/api_data_extractor.py`
    - `src/parsers/*.py` → `archive/legacy_src/parsers/*.py`
    - Updated project structure section
 
-2. **PROJECT_STRUCTURE.md** - New comprehensive structure guide
+2. **docs/PROJECT_STRUCTURE.md** - New comprehensive structure guide
    - Directory tree
    - Module purposes
    - Import examples
    - Usage examples
    - Navigation guide
 
-3. **RESTRUCTURING_COMPLETE.md** - This file (summary)
+3. **docs/archive/RESTRUCTURING_COMPLETE.md** - This file (summary)
 
 ---
 
@@ -146,7 +146,7 @@ $ python3 -m py_compile backend/agents/outgoing_agent.py
 
 ```bash
 $ ls -1
-PROJECT_STRUCTURE.md
+docs/PROJECT_STRUCTURE.md
 QUICKSTART.md
 README.md
 archive
@@ -271,7 +271,7 @@ python scripts/agent_monitor.py --command recent --limit 10
 
 ```bash
 # Invoice matcher (NEW PATH)
-python scripts/tools/invoice_matcher.py
+python archive/legacy_tools/invoice_matcher.py
 
 # Legacy parsers (NEW PATH)
 python archive/legacy_src/parsers/akgips_parser.py
@@ -330,7 +330,7 @@ python scripts/verify_installation.py
 
 2. **Tool paths changed:**
    - Old: `python tools/invoice_matcher.py`
-   - New: `python scripts/tools/invoice_matcher.py`
+   - New: `python archive/legacy_tools/invoice_matcher.py`
 
 3. **Legacy code location:**
    - Old: `src/parsers/`, `src/db/`
@@ -362,7 +362,7 @@ python backend/agents/outgoing_agent.py
 - [x] ✅ Import paths updated in agents
 - [x] ✅ `ingestion/__init__.py` created
 - [x] ✅ README.md updated with new paths
-- [x] ✅ PROJECT_STRUCTURE.md created
+- [x] ✅ docs/PROJECT_STRUCTURE.md created
 - [x] ✅ No files deleted (all preserved)
 - [x] ✅ Syntax validation passed
 - [x] ✅ Only allowed folders at top level
@@ -422,7 +422,7 @@ Root:
 
 ### For Developers
 
-- [ ] Read `PROJECT_STRUCTURE.md`
+- [ ] Read `docs/PROJECT_STRUCTURE.md`
 - [ ] Update bookmarks/shortcuts to new paths
 - [ ] Update any local scripts using old paths
 - [ ] Review `docs/V2_PRODUCTION_READY.md` for system overview
@@ -437,7 +437,7 @@ Root:
 
 - [ ] Test agent runs: `python backend/agents/*.py`
 - [ ] Test monitoring: `python scripts/agent_monitor.py`
-- [ ] Test tools: `python scripts/tools/invoice_matcher.py`
+- [ ] Test tools: `python archive/legacy_tools/invoice_matcher.py`
 
 ---
 
@@ -448,4 +448,4 @@ Root:
 
 ---
 
-**Questions?** See `PROJECT_STRUCTURE.md` for detailed guide.
+**Questions?** See `docs/PROJECT_STRUCTURE.md` for detailed guide.

@@ -8,16 +8,14 @@
 
 ### 1. ✅ Database Schema (Migration SQL)
 
-**Dosya:** `sql/stateful_ingestion_schema.sql`
+**Dosya:** `sql/archive/stateful_ingestion_schema.sql`
 
 **Tablolar:**
-
 - ✅ `agent_state` (agent_name PK, last_issue_date, last_run_at)
 - ✅ `incoming_invoices` (invoice_id PK, uuid UNIQUE, despatch_ids JSONB, row_hash, changed)
 - ✅ `outgoing_invoices` (invoice_no PK, irsaliye_codes JSONB, row_hash, changed)
 
 **Özellikler:**
-
 - Primary keys, unique constraints
 - Indexes (issue_date, supplier, changed)
 - JSONB columns
@@ -27,7 +25,6 @@
 ### 2. ✅ backend/core/config.py
 
 **Özellikler:**
-
 - .env dosyasından DB_URL ve API credentials okur
 - Minimal .env loader (no external dependency)
 - DB_URL ve PG_DSN desteği (her ikisi de çalışır)
@@ -35,7 +32,6 @@
 - DEFAULT_START_DATE = "2026-01-01"
 
 **Okuma Yapılan Değerler:**
-
 - `DB_URL` veya `PG_DSN`
 - `ISBASI_API_KEY`
 - `ISBASI_USERNAME`
@@ -45,7 +41,6 @@
 ### 3. ✅ backend/core/db.py
 
 **Özellikler:**
-
 - psycopg2 tabanlı database helper
 - Connection pooling (context manager)
 - Query helpers:
@@ -60,15 +55,16 @@
 ### 4. ✅ backend/core/agent_state.py
 
 **Fonksiyonlar:**
-
 - ✅ `get_state(agent_name)` → last_issue_date
   - DB'den okur
   - Yoksa DEFAULT_START_DATE döner
   - Error'da fallback
+  
 - ✅ `set_state(agent_name, last_issue_date)`
   - UPSERT logic (INSERT ... ON CONFLICT)
   - last_run_at otomatik güncellenir
   - Error handling
+
 - ✅ `get_last_run_at(agent_name)` → last_run_at timestamp
 
 ### 5. ✅ backend/core/normalize.py
@@ -76,7 +72,6 @@
 **Fonksiyonlar:**
 
 #### ✅ `extract_irsaliye_codes_from_description(description)`
-
 - **Pattern:** `([AF])\s*[-/]\s*(\d{4,5})`
 - **Input:** "A-09170 / F-14740"
 - **Output:** ["IRS-09170", "IRS-14740"]
@@ -87,7 +82,6 @@
   - Duplicate removal
 
 #### ✅ `normalize_despatch_ids_from_incoming(list_of_ids)`
-
 - **Input:** ["IRS2025000014740", "IRS2025000009170"]
 - **Output:** ["IRS-14740", "IRS-09170"]
 - **Özellikler:**
@@ -96,7 +90,6 @@
   - Duplicate removal
 
 #### ✅ `extract_despatch_ids_from_summary(despatch_summary)`
-
 - **Input:** "14740, 09170"
 - **Output:** ["IRS-14740", "IRS-09170"]
 - **Özellikler:**
@@ -107,7 +100,6 @@
 ### 6. ✅ backend/agents/incoming_agent.py
 
 **Özellikler:**
-
 - Agent state'den last_issue_date alır
 - IsbasiAPIIncomingInvoicesExtractor'ı kullanır
 - API'den gelen faturaları çeker (myInvoicesList endpoint)
@@ -126,14 +118,12 @@
   - Max issue_date
 
 **Progress Logging:**
-
 - Her 50 faturada bir: "⏳ Processed 150/300..."
 - Final statistics
 
 ### 7. ✅ backend/agents/outgoing_agent.py
 
 **Özellikler:**
-
 - Agent state'den last_issue_date alır
 - IsbasiAPIDataExtractor'ı kullanır
 - API'den giden faturaları çeker (PURCHASE_INVOICE hariç)
@@ -149,14 +139,12 @@
 ### 8. ✅ Mevcut Extractor'lar BOZULMADI
 
 **Dokunulmadı:**
-
 - ✅ `src/api/api_incoming_invoices_extractor.py` - Hala çalışır
 - ✅ `src/api/api_data_extractor.py` - Hala çalışır
 
 **Agent'lar nasıl kullanır:**
-
 - Extractor class'larını **import** eder
-- `fetch_`* metodlarını çağırır
+- `fetch_*` metodlarını çağırır
 - Excel/SQLite yazma metodlarını ÇAĞIRMAZ
 - Sadece veri çeker, Postgres'e yazar
 
@@ -165,17 +153,13 @@
 ### 9. ✅ Configuration Files
 
 #### requirements.txt
-
 ✅ Updated:
-
 ```python
 psycopg2-binary>=2.9.0  # Stateful ingestion için gerekli
 ```
 
 #### env.example
-
 ✅ Updated:
-
 ```bash
 # PostgreSQL (Required for stateful ingestion agents)
 DB_URL=postgresql://user:password@localhost:5432/invoices
@@ -185,9 +169,7 @@ PG_DSN=  # Alternative name
 ### 10. ✅ Documentation
 
 #### backend/README.md
-
 Comprehensive documentation:
-
 - Kurulum adımları (PostgreSQL, schema migration)
 - Architecture diagram
 - Database schema details
@@ -199,9 +181,7 @@ Comprehensive documentation:
 - Performance expectations
 
 #### STATEFUL_INGESTION_SUMMARY.md
-
 Complete implementation summary:
-
 - Tüm tamamlanan işler
 - Veri akışı
 - Kullanım senaryoları
@@ -210,9 +190,7 @@ Complete implementation summary:
 - Performance expectations
 
 #### QUICKSTART.md
-
 Step-by-step quick start guide:
-
 - Installation verification
 - Prerequisites (PostgreSQL)
 - Configuration (.env)
@@ -224,9 +202,7 @@ Step-by-step quick start guide:
 - Monitoring
 
 #### README.md (Main)
-
 ✅ Updated:
-
 - Backend agents section eklendi
 - Proje yapısı güncellendi
 - Yeni özellikler listesi
@@ -234,9 +210,7 @@ Step-by-step quick start guide:
 ### 11. ✅ Setup Scripts
 
 #### scripts/setup_postgres.sh
-
 Automated setup script:
-
 - .env file check ve oluşturma
 - DB_URL validation
 - Database connection test
@@ -246,9 +220,7 @@ Automated setup script:
 - Executable permission
 
 #### scripts/verify_installation.py
-
 Verification script:
-
 - Module import tests
 - Configuration tests
 - Normalization function tests
@@ -259,33 +231,28 @@ Verification script:
 ## 📊 Özellikler Özeti
 
 ### ✅ Stateful Ingestion
-
 - Agent state tracking (last_issue_date)
 - Incremental updates (sadece yeni faturalar)
 - Default start date: 2026-01-01
 
 ### ✅ Change Detection
-
 - Row hash (SHA256 of raw_json)
 - Upsert logic (insert/update)
 - Changed flag tracking
 
 ### ✅ İrsaliye Normalizasyonu
-
 - Gelen faturalar: IRS2025000014740 → IRS-14740
 - Giden faturalar: A-09170 → IRS-09170
 - Pattern: `([AF])\s*[-/]\s*(\d{4,5})`
 - Zero-padding (4 hane → 01234)
 
 ### ✅ Database Schema
-
 - 3 tables: agent_state, incoming_invoices, outgoing_invoices
 - JSONB columns (despatch_ids, irsaliye_codes, raw_json)
 - Indexes (issue_date, supplier, firm_name, changed)
 - Constraints (PK, UNIQUE)
 
 ### ✅ Error Handling
-
 - Database connection errors
 - API login errors
 - Missing configuration
@@ -293,7 +260,6 @@ Verification script:
 - Graceful fallbacks
 
 ### ✅ Logging
-
 - Comprehensive stdout logging
 - Progress updates (every 50 invoices)
 - Final statistics (insert/update/unchanged counts)
@@ -302,39 +268,31 @@ Verification script:
 ## 🔍 Test Senaryoları
 
 ### ✅ Test 1: Verification Script
-
 ```bash
 python3 scripts/verify_installation.py
 ```
-
 **Status:** ✅ PASS (tüm testler geçti)
 
 ### ✅ Test 2: Python Syntax
-
 ```bash
 python3 -m py_compile backend/**/*.py
 ```
-
 **Status:** ✅ PASS (syntax errors yok)
 
 ### ✅ Test 3: Import Test
-
 ```python
 from backend.core.config import config
 from backend.core.db import db
 from backend.core.agent_state import get_state
 from backend.core.normalize import extract_irsaliye_codes_from_description
 ```
-
 **Status:** ✅ PASS (tüm imports çalışıyor)
 
 ### ✅ Test 4: Normalization
-
 ```python
 extract_irsaliye_codes_from_description("A-09170 / F-14740")
 # Expected: ['IRS-09170', 'IRS-14740']
 ```
-
 **Status:** ✅ PASS
 
 ## 📂 Dosya Yapısı
@@ -370,10 +328,9 @@ STATEFUL_INGESTION_SUMMARY.md     ✅ Implementation summary
 IMPLEMENTATION_COMPLETE.md        ✅ Bu dosya
 ```
 
-## 🚀 Kullanım 
+## 🚀 Kullanım
 
 ### İlk Kurulum
-
 ```bash
 # 1. Verification
 python3 scripts/verify_installation.py
@@ -387,7 +344,6 @@ python backend/agents/outgoing_agent.py
 ```
 
 ### Günlük Çalıştırma
-
 ```bash
 # Sadece yeni/değişen faturaları işler (incremental)
 python backend/agents/incoming_agent.py
@@ -395,7 +351,6 @@ python backend/agents/outgoing_agent.py
 ```
 
 ### Cron Job
-
 ```cron
 0 2 * * * cd /path/to/project && venv/bin/python backend/agents/incoming_agent.py
 0 3 * * * cd /path/to/project && venv/bin/python backend/agents/outgoing_agent.py
@@ -403,22 +358,22 @@ python backend/agents/outgoing_agent.py
 
 ## ✅ Başarı Kriterleri
 
-- ✅ Database schema oluşturuldu (3 tablo)
-- ✅ Core modules yazıldı (4 modül)
-- ✅ Agent'lar yazıldı (2 agent)
-- ✅ Mevcut extractor'lar bozulmadı
-- ✅ İrsaliye normalizasyonu çalışıyor
-- ✅ Upsert logic çalışıyor
-- ✅ Change detection çalışıyor
-- ✅ Agent state tracking çalışıyor
-- ✅ Comprehensive documentation
-- ✅ Setup scripts
-- ✅ Verification tests
-- ✅ Error handling
-- ✅ Logging
-- ✅ Code çalışır durumda
-- ✅ Import path'ler doğru
-- ✅ Syntax errors yok
+- [x] ✅ Database schema oluşturuldu (3 tablo)
+- [x] ✅ Core modules yazıldı (4 modül)
+- [x] ✅ Agent'lar yazıldı (2 agent)
+- [x] ✅ Mevcut extractor'lar bozulmadı
+- [x] ✅ İrsaliye normalizasyonu çalışıyor
+- [x] ✅ Upsert logic çalışıyor
+- [x] ✅ Change detection çalışıyor
+- [x] ✅ Agent state tracking çalışıyor
+- [x] ✅ Comprehensive documentation
+- [x] ✅ Setup scripts
+- [x] ✅ Verification tests
+- [x] ✅ Error handling
+- [x] ✅ Logging
+- [x] ✅ Code çalışır durumda
+- [x] ✅ Import path'ler doğru
+- [x] ✅ Syntax errors yok
 
 ## 📈 Beklenen Performans
 
@@ -433,7 +388,6 @@ python backend/agents/outgoing_agent.py
 **Status:** ✅ TAMAMLANDI - PRODUCTION READY
 
 Tüm istenen özellikler başarıyla implemente edildi:
-
 1. ✅ Postgres schema (migration SQL)
 2. ✅ Configuration management (.env)
 3. ✅ Database helpers (psycopg2)
@@ -454,7 +408,6 @@ Tüm istenen özellikler başarıyla implemente edildi:
 5. Cron job kur (opsiyonel)
 
 **Dokümantasyon:**
-
 - Quick start: `QUICKSTART.md`
 - Agent docs: `backend/README.md`
 - Summary: `STATEFUL_INGESTION_SUMMARY.md`

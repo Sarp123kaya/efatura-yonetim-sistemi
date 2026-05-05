@@ -344,11 +344,11 @@ chmod +x test_restructuring.sh
 ## 📞 Still Having Issues?
 
 ### 1. Check This File First
-- `PROJECT_STRUCTURE.md` - Detailed structure guide
+- `docs/PROJECT_STRUCTURE.md` - Detailed structure guide
 
 ### 2. Review Changelogs
 - `docs/CHANGELOG_v2.1.1.md` - Latest changes
-- `RESTRUCTURING_COMPLETE.md` - What was moved
+- `docs/archive/RESTRUCTURING_COMPLETE.md` - What was moved
 
 ### 3. Common Fixes
 
@@ -385,6 +385,6 @@ python backend/agents/incoming_agent.py
 **Status:** 📝 Living document - update as issues are discovered
 
 **Questions?** Check:
-- `PROJECT_STRUCTURE.md` for structure details
+- `docs/PROJECT_STRUCTURE.md` for structure details
 - `README.md` for usage guide
 - `docs/V2_PRODUCTION_READY.md` for system overview

@@ -3,7 +3,7 @@
 ## ✅ Tamamlanan İşler
 
 ### 1. Database Schema (SQL Migration)
-📄 **Dosya:** `sql/stateful_ingestion_schema.sql`
+📄 **Dosya:** `sql/archive/stateful_ingestion_schema.sql`
 
 **Oluşturulan Tablolar:**
 - `agent_state`: Agent'ların son işleme durumunu takip eder

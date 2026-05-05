@@ -54,29 +54,45 @@ else
 fi
 
 echo ""
-echo "📝 Applying schema..."
+echo "📝 Applying schema and migrations..."
 
-# Apply schema
-if psql "$DB_URL" < sql/stateful_ingestion_schema.sql; then
-    echo "✅ Schema applied successfully!"
-else
-    echo "❌ Schema application failed!"
-    exit 1
-fi
+SQL_FILES=(
+    "sql/stateful_ingestion_schema_v2.sql"
+    "sql/migration_v2.2_despatch_improvements.sql"
+    "sql/migration_irsaliye_override.sql"
+    "sql/migration_incoming_xml_cache.sql"
+)
+
+for sql_file in "${SQL_FILES[@]}"; do
+    echo "   ▶ $sql_file"
+    if psql "$DB_URL" -v ON_ERROR_STOP=1 < "$sql_file"; then
+        echo "   ✅ Applied"
+    else
+        echo "   ❌ Failed: $sql_file"
+        exit 1
+    fi
+done
+
+echo "✅ Schema and migrations applied successfully!"
 
 echo ""
 echo "🔍 Verifying tables..."
 
 # Check if tables exist
-TABLES=$(psql "$DB_URL" -t -c "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename IN ('agent_state', 'incoming_invoices', 'outgoing_invoices')")
+TABLES=$(psql "$DB_URL" -t -c "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename IN ('agent_state', 'incoming_invoices', 'outgoing_invoices', 'incoming_invoice_xml_cache', 'agent_runs')")
 
 if echo "$TABLES" | grep -q "agent_state" && \
    echo "$TABLES" | grep -q "incoming_invoices" && \
-   echo "$TABLES" | grep -q "outgoing_invoices"; then
+   echo "$TABLES" | grep -q "outgoing_invoices" && \
+   echo "$TABLES" | grep -q "incoming_invoice_xml_cache"; then
     echo "✅ All tables created:"
     echo "   - agent_state"
     echo "   - incoming_invoices"
     echo "   - outgoing_invoices"
+    echo "   - incoming_invoice_xml_cache"
+    if echo "$TABLES" | grep -q "agent_runs"; then
+        echo "   - agent_runs"
+    fi
 else
     echo "⚠️  Some tables might be missing!"
 fi
@@ -91,6 +107,7 @@ echo "✅ Setup Complete!"
 echo "======================================"
 echo ""
 echo "Next steps:"
-echo "1. Run incoming agent: python backend/agents/incoming_agent.py"
-echo "2. Run outgoing agent: python backend/agents/outgoing_agent.py"
+echo "1. First full run with XML cache: python3 scripts/run_invoice_pipeline.py --start-date 2026-01-01 --refresh-xml"
+echo "2. Regular updates: python3 scripts/run_invoice_pipeline.py"
+echo "3. Supplier detail Excel exports: python3 scripts/export_supplier_invoice_details.py"
 echo ""

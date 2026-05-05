@@ -195,7 +195,7 @@ Bu komut:
 2. Gelen fatura XML'lerini çeker ve `incoming_invoice_xml_cache` içine yedekler
 3. Giden faturaları API'den çeker
 4. PostgreSQL'e kaydeder
-5. Eşleştirme Excel raporu üretir
+5. Normal eşleştirme ve ters eşleştirme Excel raporlarını üretir
 
 İlk çalıştırma uzun sürebilir çünkü XML cache doldurulur.
 
@@ -213,6 +213,7 @@ Bu çalıştırmada:
 - Fatura listesi API'den kontrol edilir
 - Cache'te olan XML'ler tekrar çekilmez
 - Sadece yeni/cache'te olmayan XML'ler API'den çekilir
+- Normal eşleştirme ve ters eşleştirme raporları birlikte üretilir
 
 XML'leri zorla yeniden çekmek gerekirse:
 
@@ -360,12 +361,12 @@ python3 scripts/export_supplier_invoice_details.py
 
 ## 14. GitHub'dan Tek Dosya İndirme
 
-Bu rehberi tek başına indirmek için GitHub'da `YENI_BILGISAYAR_KURULUM_REHBERI.md` dosyasını açıp `Raw` seçeneğiyle kaydedebilirsin.
+Bu rehberi tek başına indirmek için GitHub'da `docs/YENI_BILGISAYAR_KURULUM_REHBERI.md` dosyasını açıp `Raw` seçeneğiyle kaydedebilirsin.
 
 Komutla indirmek istersen:
 
 ```bash
-curl -L -o YENI_BILGISAYAR_KURULUM_REHBERI.md \
-https://raw.githubusercontent.com/Sarp123kaya/efatura-yonetim-sistemi/VPS/YENI_BILGISAYAR_KURULUM_REHBERI.md
+curl -L -o docs/YENI_BILGISAYAR_KURULUM_REHBERI.md \
+https://raw.githubusercontent.com/Sarp123kaya/efatura-yonetim-sistemi/VPS/docs/YENI_BILGISAYAR_KURULUM_REHBERI.md
 ```
 

@@ -30,6 +30,9 @@ data/logs/*.log
 data/xml/
 data/xml/**/*.xml
 
+# Yerel temizlik/yedek arşivi
+local_archive/
+
 # Mac OS
 .DS_Store
 .AppleDouble

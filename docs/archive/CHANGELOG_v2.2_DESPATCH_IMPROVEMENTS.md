@@ -176,7 +176,7 @@ sql/migration_v2.2_despatch_improvements.sql       ✅ NEW - Add despatch_id col
 ### Test & Docs
 ```
 scripts/test_v2.2_despatch_improvements.py         ✅ NEW - Comprehensive test suite
-CHANGELOG_v2.2_DESPATCH_IMPROVEMENTS.md            ✅ NEW - This file
+docs/archive/CHANGELOG_v2.2_DESPATCH_IMPROVEMENTS.md            ✅ NEW - This file
 ```
 
 **Agent files:** ✅ UNCHANGED (as required)

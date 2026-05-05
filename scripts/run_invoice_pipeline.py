@@ -113,7 +113,7 @@ def run_pipeline(args: argparse.Namespace) -> list[Path]:
         print(f"  İrsaliye kodu yok:  {match_summary['irsaliye_yok']}")
         print(f"  Rapor:              {match_file}")
 
-        if args.include_reverse:
+        if not args.skip_reverse:
             print()
             print("Ters eşleştirme raporu oluşturuluyor...")
             reverse_df = get_reverse_matching_data()
@@ -162,9 +162,9 @@ def main() -> None:
         help="API'den veri çekmeden mevcut DB verisiyle sadece eşleştirme raporu üret.",
     )
     parser.add_argument(
-        "--include-reverse",
+        "--skip-reverse",
         action="store_true",
-        help="Ek olarak gelen -> giden ters eşleştirme raporu da üret.",
+        help="Varsayılan ters eşleştirme raporunu üretme.",
     )
     parser.add_argument(
         "--refresh-xml",

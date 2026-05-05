@@ -82,11 +82,17 @@ docker run -d \
 ### 2. Schema Migrate Et
 
 ```bash
-# Schema'yı uygula
-psql invoices < sql/stateful_ingestion_schema.sql
+# Schema ve migration'ları uygula
+psql invoices < sql/stateful_ingestion_schema_v2.sql
+psql invoices < sql/migration_v2.2_despatch_improvements.sql
+psql invoices < sql/migration_irsaliye_override.sql
+psql invoices < sql/migration_incoming_xml_cache.sql
 
 # Veya docker ile:
-docker exec -i invoices-postgres psql -U invoices_user -d invoices < sql/stateful_ingestion_schema.sql
+docker exec -i invoices-postgres psql -U invoices_user -d invoices < sql/stateful_ingestion_schema_v2.sql
+docker exec -i invoices-postgres psql -U invoices_user -d invoices < sql/migration_v2.2_despatch_improvements.sql
+docker exec -i invoices-postgres psql -U invoices_user -d invoices < sql/migration_irsaliye_override.sql
+docker exec -i invoices-postgres psql -U invoices_user -d invoices < sql/migration_incoming_xml_cache.sql
 ```
 
 ### 3. Python Paketlerini Kur
