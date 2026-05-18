@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Job Detayı - E-Fatura Web Panel{% endblock %}
+{% block content %}
+<section class="panel">
+    <div class="hero compact">
+        <div>
+            <h1>{{ actions.get(job.type).label if actions.get(job.type) else job.type }}</h1>
+            <p><span class="badge {{ job.status }}">{{ job.status }}</span> {{ job.id }}</p>
+        </div>
+        <a class="button secondary" href="{{ url_for('jobs') }}">Tüm Joblar</a>
+    </div>
+
+    <dl class="meta">
+        <dt>Oluşturan</dt><dd>{{ job.created_by or "-" }}</dd>
+        <dt>Oluşturma</dt><dd>{{ job.created_at }}</dd>
+        <dt>Başlangıç</dt><dd>{{ job.started_at or "-" }}</dd>
+        <dt>Bitiş</dt><dd>{{ job.finished_at or "-" }}</dd>
+        <dt>Hata</dt><dd>{{ job.error_message or "-" }}</dd>
+    </dl>
+
+    {% if job.created_files %}
+        <h2>Oluşturulan Dosyalar</h2>
+        <ul>
+            {% for file in job.created_files %}
+                <li><a href="{{ url_for('download', relative_path=file) }}">{{ file }}</a></li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    <h2>Log</h2>
+    <pre class="log">{{ job.log_text or "Job henüz log üretmedi." }}</pre>
+</section>
+{% endblock %}

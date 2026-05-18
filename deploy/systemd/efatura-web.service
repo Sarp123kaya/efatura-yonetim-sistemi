@@ -1,0 +1,16 @@
+[Unit]
+Description=E-Fatura Web Panel
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/efatura-panel
+EnvironmentFile=/opt/efatura-panel/.env
+ExecStart=/opt/efatura-panel/.venv/bin/gunicorn -b 127.0.0.1:8000 backend.web.app:app
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

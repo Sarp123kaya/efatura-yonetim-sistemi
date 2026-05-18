@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pandas as pd
 from datetime import datetime
 from backend.core.db import db
+from report_cleanup import cleanup_old_reports
 from backend.core.incoming_xml_cache import ensure_xml_cache_schema
 
 PREFIX_TO_SUPPLIER = {
@@ -24,6 +25,73 @@ PREFIX_TO_SUPPLIER = {
     'F': 'FULL',
     'T': 'TERMA',
 }
+
+
+def normalize_despatch_code(value):
+    text = str(value or '').upper()
+    match = re.search(r'\b([AFT])\s*[-:]?\s*0*(\d+)\b', text)
+    if not match:
+        return ''
+    prefix, number = match.groups()
+    return f"{prefix}-{number[-5:].zfill(5)}"
+
+
+def extract_plaka_text(description):
+    text = str(description or '')
+    match = re.search(r'\bPLAKA\s*[:：]\s*([^\n\r|;]+)', text, re.IGNORECASE)
+    if match:
+        plate = re.sub(r'\s+', ' ', match.group(1)).strip(' -,:')
+        return f"PLAKA: {plate}" if plate else ''
+
+    match = re.search(
+        r'\b(\d{2}\s*[A-ZÇĞİÖŞÜ]{1,3}\s*\d{2,5})\s+PLAKAL[İIıi]\b',
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return ''
+    plate = re.sub(r'\s+', '', match.group(1)).upper()
+    return f"PLAKA: {plate}" if plate else ''
+
+
+def extract_plaka_for_code(incoming_row, code):
+    documents = incoming_row.get('despatch_documents') or []
+    if isinstance(documents, str):
+        try:
+            documents = json.loads(documents)
+        except json.JSONDecodeError:
+            documents = []
+
+    target = normalize_despatch_code(code)
+    fallback = ''
+    for doc in documents:
+        if not isinstance(doc, dict):
+            continue
+
+        description = doc.get('description') or ''
+        plaka = extract_plaka_text(description)
+        if plaka and not fallback:
+            fallback = plaka
+
+        doc_codes = [
+            normalize_despatch_code(doc.get('despatch_id_short')),
+            normalize_despatch_code(doc.get('despatch_id_full')),
+            normalize_despatch_code(description),
+        ]
+        if plaka and target and target in doc_codes:
+            return plaka
+
+    if fallback:
+        return fallback
+
+    xml_content = incoming_row.get('xml_content') or ''
+    note_values = re.findall(r'<cbc:Note[^>]*>(.*?)</cbc:Note>', str(xml_content), flags=re.IGNORECASE | re.DOTALL)
+    for note in note_values:
+        plaka = extract_plaka_text(re.sub(r'<[^>]+>', ' ', note))
+        if plaka:
+            return plaka
+
+    return ''
 
 
 def build_incoming_index(incoming_rows):
@@ -71,10 +139,13 @@ def get_matching_data():
     """)
 
     incoming_rows = db.query("""
-        SELECT invoice_id, issue_date, supplier, amount, currency,
-               COALESCE(despatch_ids_override, despatch_ids) AS despatch_ids
-        FROM incoming_invoices
-        WHERE jsonb_array_length(COALESCE(despatch_ids_override, despatch_ids)) > 0
+        SELECT i.invoice_id, i.issue_date, i.supplier, i.amount, i.currency,
+               COALESCE(i.despatch_ids_override, i.despatch_ids) AS despatch_ids,
+               c.despatch_documents,
+               c.xml_content
+        FROM incoming_invoices i
+        LEFT JOIN incoming_invoice_xml_cache c ON c.uuid = i.uuid
+        WHERE jsonb_array_length(COALESCE(i.despatch_ids_override, i.despatch_ids)) > 0
     """)
 
     incoming_index = build_incoming_index(incoming_rows)
@@ -105,6 +176,7 @@ def get_matching_data():
                 'Gelen Tedarikçi': '',
                 'Gelen Tutar (TL)': 0,
                 'Fark (TL)': 0,
+                'İrsaliye Açıklaması': '',
                 'Durum': 'İrsaliye kodu yok'
             })
             continue
@@ -133,12 +205,14 @@ def get_matching_data():
                 gelen_fatura_id = in_row.get('invoice_id', '')
                 gelen_supplier = in_row.get('supplier', '')
                 gelen_tutar = avg_incoming
+                irsaliye_aciklamasi = extract_plaka_for_code(in_row, code)
             else:
                 fark = 0
                 durum = 'Bulunamadı'
                 gelen_fatura_id = ''
                 gelen_supplier = ''
                 gelen_tutar = 0
+                irsaliye_aciklamasi = ''
 
             results.append({
                 'outgoing_invoice_id': out_row.get('id', ''),
@@ -151,6 +225,7 @@ def get_matching_data():
                 'Gelen Tedarikçi': gelen_supplier,
                 'Gelen Tutar (TL)': round(gelen_tutar, 2),
                 'Fark (TL)': round(fark, 2),
+                'İrsaliye Açıklaması': irsaliye_aciklamasi,
                 'Durum': durum
             })
 
@@ -160,6 +235,7 @@ def get_matching_data():
 def generate_excel(df, output_dir='kayıtlar'):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    cleanup_old_reports(output_path, ["Fatura_Eslestirme_*.xlsx"])
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = output_path / f'Fatura_Eslestirme_{timestamp}.xlsx'
@@ -184,15 +260,15 @@ def generate_excel(df, output_dir='kayıtlar'):
         for col_num, value in enumerate(df_export.columns.values):
             worksheet.write(0, col_num, value, header_fmt)
 
-        widths = [12, 22, 35, 16, 16, 22, 35, 16, 14, 16]
+        widths = [12, 22, 35, 16, 16, 22, 35, 16, 14, 24, 16]
         for i, w in enumerate(widths):
             worksheet.set_column(i, i, w)
 
         for row_num in range(1, len(df_export) + 1):
             r = df_export.iloc[row_num - 1]
-            worksheet.write(row_num, 3, r['Giden Tutar (TL)'], currency_fmt)
-            worksheet.write(row_num, 7, r['Gelen Tutar (TL)'], currency_fmt)
-            worksheet.write(row_num, 8, r['Fark (TL)'], currency_fmt)
+            for column in ['Giden Tutar (TL)', 'Gelen Tutar (TL)', 'Fark (TL)']:
+                if column in df_export.columns:
+                    worksheet.write(row_num, df_export.columns.get_loc(column), r[column], currency_fmt)
 
             durum = r['Durum']
             if durum == 'Eşleşti':
@@ -201,7 +277,7 @@ def generate_excel(df, output_dir='kayıtlar'):
                 fmt = missing_fmt
             else:
                 fmt = nocode_fmt
-            worksheet.write(row_num, 9, durum, fmt)
+            worksheet.write(row_num, df_export.columns.get_loc('Durum'), durum, fmt)
 
         last = len(df_export) + 3
         matched = len(df_export[df_export['Durum'] == 'Eşleşti'])

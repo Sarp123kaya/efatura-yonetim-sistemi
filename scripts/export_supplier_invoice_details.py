@@ -23,6 +23,7 @@ import pandas as pd
 from xlsxwriter.utility import xl_rowcol_to_cell
 
 from backend.core.db import db
+from report_cleanup import cleanup_old_reports
 
 
 NAMESPACES = {
@@ -37,12 +38,14 @@ SUPPLIER_CONFIG = [
         "display": "AK GIPS",
         "filename": "AK_GIPS_Fabrikasi",
         "keywords": ("ak gips", "akgips"),
+        "prefix": "A",
     },
     {
         "code": "fullboard",
         "display": "FULLBOARD",
         "filename": "FULLBOARD_Fabrikasi",
         "keywords": ("fullboard", "fulboard"),
+        "prefix": "F",
     },
 ]
 
@@ -102,6 +105,44 @@ FULLBOARD_PIVOT_COLUMNS = [
     "Toplam Birim Fiyat",
 ]
 
+DETAIL_DROP_COLUMNS = {
+    "ak_gips": [
+        "UUID",
+        "TCKN/VKN",
+        "Para Birimi",
+        "Satır No",
+        "Satır Tutarı",
+        "KDV Oranı",
+        "Torba KG",
+    ],
+    "fullboard": [
+        "UUID",
+        "TCKN/VKN",
+        "Para Birimi",
+        "Satır No",
+        "Satır Tutarı",
+        "KDV Oranı",
+        "Torba KG",
+        "Alış Fiyatı (Torba)",
+        "Ürün Kodu",
+    ],
+}
+
+SUMMARY_DROP_COLUMNS = {
+    "ak_gips": [
+        "UUID",
+        "Para Birimi",
+        "Ürün Satır Sayısı",
+        "Matrah - Satır Toplamı",
+    ],
+    "fullboard": [
+        "UUID",
+        "Para Birimi",
+        "Ürün Satır Sayısı",
+        "Matrah - Satır Toplamı",
+    ],
+}
+
 
 def normalize_text(value: Any) -> str:
     """Return a lowercase, accent-insensitive string for supplier matching."""
@@ -157,6 +198,55 @@ def parse_jsonb_list(value: Any) -> List[Any]:
 def normalize_code_number(value: Any) -> str:
     digits = re.sub(r"\D", "", str(value or ""))
     return digits[-5:].zfill(5) if digits else ""
+
+
+def normalize_despatch_key(value: Any) -> str:
+    """Normalize A/F prefixed despatch codes without losing factory identity."""
+    text = str(value or "").upper()
+    match = re.search(r"\b([AF])\s*[-:]?\s*0*(\d+)\b", text)
+    if not match:
+        return ""
+    prefix, number = match.groups()
+    return f"{prefix}-{number[-5:].zfill(5)}"
+
+
+def collect_despatch_keys(row: Dict[str, Any], prefix: str = "") -> List[str]:
+    """Collect unique A/F-prefixed despatch keys from ids and XML documents."""
+    expected = f"{prefix.upper()}-" if prefix else ""
+    keys = []
+
+    def add_key(value: Any) -> None:
+        key = normalize_despatch_key(value)
+        if not key:
+            return
+        if expected and not key.startswith(expected):
+            return
+        if key not in keys:
+            keys.append(key)
+
+    for despatch_id in parse_jsonb_list(row.get("despatch_ids")):
+        add_key(despatch_id)
+
+    for doc in parse_jsonb_list(row.get("despatch_documents")):
+        if not isinstance(doc, dict):
+            continue
+        for field in ("despatch_id_short", "despatch_id_full", "description"):
+            add_key(doc.get(field))
+
+    return keys
+
+
+def row_has_factory_prefix(row: Dict[str, Any], prefix: str) -> bool:
+    """True when incoming invoice has at least one despatch code for this factory."""
+    return bool(collect_despatch_keys(row, prefix))
+
+
+def format_factory_despatch_ids(row: Dict[str, Any], prefix: str) -> str:
+    """Prefer factory-prefixed despatch codes in Excel output."""
+    keys = collect_despatch_keys(row, prefix)
+    if keys:
+        return ", ".join(keys)
+    return format_jsonb_for_excel(row.get("despatch_ids"))
 
 
 def text_or_empty(element: Optional[ET.Element]) -> str:
@@ -320,10 +410,10 @@ def fetch_outgoing_index() -> Dict[str, Dict[str, Any]]:
         per_despatch_total = total_tl / Decimal(code_count)
 
         for code in codes:
-            number = normalize_code_number(code)
-            if not number:
+            key = normalize_despatch_key(code)
+            if not key:
                 continue
-            index[number] = {
+            index[key] = {
                 "customer": row.get("firm_name") or "",
                 "price": per_despatch_total,
                 "description": row.get("description") or "",
@@ -334,8 +424,8 @@ def fetch_outgoing_index() -> Dict[str, Dict[str, Any]]:
 
 
 def summarize_despatch_context(row: Dict[str, Any], outgoing_index: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    despatch_ids = parse_jsonb_list(row.get("despatch_ids"))
     despatch_docs = parse_jsonb_list(row.get("despatch_documents"))
+    despatch_keys = collect_despatch_keys(row)
     incoming_descriptions = {}
     customers = []
     descriptions = []
@@ -344,17 +434,17 @@ def summarize_despatch_context(row: Dict[str, Any], outgoing_index: Dict[str, Di
     for doc in despatch_docs:
         if not isinstance(doc, dict):
             continue
-        number = normalize_code_number(doc.get("despatch_id_short") or doc.get("despatch_id_full"))
+        key = (
+            normalize_despatch_key(doc.get("despatch_id_short"))
+            or normalize_despatch_key(doc.get("despatch_id_full"))
+            or normalize_despatch_key(doc.get("description"))
+        )
         description = doc.get("description")
-        if number and description:
-            incoming_descriptions[number] = str(description)
+        if key and description:
+            incoming_descriptions[key] = str(description)
 
-    for despatch_id in despatch_ids:
-        number = normalize_code_number(despatch_id)
-        if not number:
-            continue
-
-        outgoing = outgoing_index.get(number)
+    for key in despatch_keys:
+        outgoing = outgoing_index.get(key)
         if outgoing:
             if outgoing["customer"] and outgoing["customer"] not in customers:
                 customers.append(outgoing["customer"])
@@ -362,7 +452,7 @@ def summarize_despatch_context(row: Dict[str, Any], outgoing_index: Dict[str, Di
             if outgoing["description"] and outgoing["description"] not in descriptions:
                 descriptions.append(outgoing["description"])
 
-        incoming_description = incoming_descriptions.get(number)
+        incoming_description = incoming_descriptions.get(key)
         if incoming_description and incoming_description not in descriptions:
             descriptions.append(incoming_description)
 
@@ -373,7 +463,7 @@ def summarize_despatch_context(row: Dict[str, Any], outgoing_index: Dict[str, Di
     }
 
 
-def invoice_base(row: Dict[str, Any]) -> Dict[str, Any]:
+def invoice_base(row: Dict[str, Any], prefix: str) -> Dict[str, Any]:
     return {
         "Düzenleme Tarihi": row.get("issue_date"),
         "Tedarikçi": row.get("supplier"),
@@ -383,11 +473,15 @@ def invoice_base(row: Dict[str, Any]) -> Dict[str, Any]:
         "Fatura Tutarı": row.get("amount"),
         "KDV Matrahı": row.get("total_vat_base"),
         "Para Birimi": row.get("currency"),
-        "İrsaliye Kodları": format_jsonb_for_excel(row.get("despatch_ids")),
+        "İrsaliye Kodları": format_factory_despatch_ids(row, prefix),
     }
 
 
-def build_report_frames(rows: List[Dict[str, Any]], keywords: Iterable[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def build_report_frames(
+    rows: List[Dict[str, Any]],
+    keywords: Iterable[str],
+    prefix: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     detail_rows = []
     summary_rows = []
     outgoing_index = fetch_outgoing_index()
@@ -395,8 +489,10 @@ def build_report_frames(rows: List[Dict[str, Any]], keywords: Iterable[str]) -> 
     for row in rows:
         if not matches_supplier(row.get("supplier"), keywords):
             continue
+        if not row_has_factory_prefix(row, prefix):
+            continue
 
-        base = invoice_base(row)
+        base = invoice_base(row, prefix)
         despatch_context = summarize_despatch_context(row, outgoing_index)
         base.update(despatch_context)
         xml_status = "OK"
@@ -427,7 +523,7 @@ def build_report_frames(rows: List[Dict[str, Any]], keywords: Iterable[str]) -> 
                 "Fatura Tutarı": row.get("amount"),
                 "KDV Matrahı": row.get("total_vat_base"),
                 "Para Birimi": row.get("currency"),
-                "İrsaliye Kodları": format_jsonb_for_excel(row.get("despatch_ids")),
+                "İrsaliye Kodları": format_factory_despatch_ids(row, prefix),
                 "Giden Müşteri": despatch_context["Giden Müşteri"],
                 "Giden Müşteri Fiyatı": despatch_context["Giden Müşteri Fiyatı"],
                 "İrsaliye Açıklaması": despatch_context["İrsaliye Açıklaması"],
@@ -487,9 +583,24 @@ def write_supplier_excel(
     output_file: Path,
     supplier_code: str,
 ) -> None:
+    detail_export = detail_df.copy()
+    if {"Alış Fiyatı (Torba)", "Birim Fiyat", "Torba KG"}.issubset(detail_export.columns):
+        detail_export["Alış Fiyatı (Torba)"] = detail_export.apply(
+            lambda row: (
+                (row["Birim Fiyat"] * row["Torba KG"]) / 1000
+                if pd.notna(row.get("Birim Fiyat")) and pd.notna(row.get("Torba KG"))
+                else None
+            ),
+            axis=1,
+        )
+
+    summary_export = summary_df.copy()
+    detail_export = detail_export.drop(columns=DETAIL_DROP_COLUMNS.get(supplier_code, []), errors="ignore")
+    summary_export = summary_export.drop(columns=SUMMARY_DROP_COLUMNS.get(supplier_code, []), errors="ignore")
+
     with pd.ExcelWriter(output_file, engine="xlsxwriter", datetime_format="yyyy-mm-dd") as writer:
-        detail_df.to_excel(writer, index=False, sheet_name="Fatura Detayları")
-        summary_df.to_excel(writer, index=False, sheet_name="Fatura Özeti")
+        detail_export.to_excel(writer, index=False, sheet_name="Fatura Detayları")
+        summary_export.to_excel(writer, index=False, sheet_name="Fatura Özeti")
         pivot_df = None
         if supplier_code == "fullboard":
             pivot_df = build_fullboard_pivot_summary(detail_df)
@@ -510,7 +621,7 @@ def write_supplier_excel(
         number_fmt = workbook.add_format({"num_format": "#,##0.00", "border": 1})
         date_fmt = workbook.add_format({"num_format": "yyyy-mm-dd", "border": 1})
 
-        sheets = [("Fatura Detayları", detail_df), ("Fatura Özeti", summary_df)]
+        sheets = [("Fatura Detayları", detail_export), ("Fatura Özeti", summary_export)]
         if pivot_df is not None:
             sheets.append(("Pivot Özet", pivot_df))
 
@@ -533,7 +644,7 @@ def write_supplier_excel(
                     value = df.iloc[row_num - 1][column]
                     if pd.isna(value):
                         value = ""
-                    if column == "Alış Fiyatı (Torba)" and price_col_idx is not None:
+                    if column == "Alış Fiyatı (Torba)" and price_col_idx is not None and "Torba KG" in df.columns:
                         bag_kg = df.iloc[row_num - 1].get("Torba KG")
                         if pd.isna(bag_kg) or bag_kg == "":
                             worksheet.write(row_num, col_num, "", currency_fmt)
@@ -544,6 +655,7 @@ def write_supplier_excel(
                         "Fatura Tutarı",
                         "KDV Matrahı",
                         "Giden Müşteri Fiyatı",
+                        "Alış Fiyatı (Torba)",
                         "Birim Fiyat",
                         "KDV Dahil Birim Fiyat",
                         "Satır Tutarı",
@@ -569,7 +681,8 @@ def export_supplier_reports(output_dir: Path) -> List[Path]:
     created_files = []
 
     for supplier in SUPPLIER_CONFIG:
-        detail_df, summary_df = build_report_frames(rows, supplier["keywords"])
+        cleanup_old_reports(output_dir, [f"{supplier['filename']}_*.xlsx"])
+        detail_df, summary_df = build_report_frames(rows, supplier["keywords"], supplier["prefix"])
         output_file = output_dir / f"{supplier['filename']}_{timestamp}.xlsx"
         write_supplier_excel(detail_df, summary_df, output_file, supplier["code"])
         created_files.append(output_file)

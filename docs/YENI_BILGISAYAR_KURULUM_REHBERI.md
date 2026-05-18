@@ -117,6 +117,7 @@ psql "$DB_URL" -f sql/stateful_ingestion_schema_v2.sql
 psql "$DB_URL" -f sql/migration_v2.2_despatch_improvements.sql
 psql "$DB_URL" -f sql/migration_irsaliye_override.sql
 psql "$DB_URL" -f sql/migration_incoming_xml_cache.sql
+psql "$DB_URL" -f sql/migration_outgoing_xml_cache.sql
 ```
 
 Tabloları kontrol et:
@@ -130,6 +131,7 @@ psql "$DB_URL" -c "\dt"
 - `incoming_invoices`
 - `outgoing_invoices`
 - `incoming_invoice_xml_cache`
+- `outgoing_invoice_xml_cache`
 - `agent_state`
 - `agent_runs`
 
@@ -155,6 +157,7 @@ ISBASI_USERNAME=BURAYA_EMAIL
 ISBASI_PASSWORD=BURAYA_SIFRE
 ISBASI_BASE_URL=https://mw-jplatform.isbasi.com
 ISBASI_VERIFY_SSL=true
+ISBASI_OUTGOING_UBL_ENDPOINT=
 
 DB_URL=postgresql://KULLANICI:SIFRE@localhost:5432/invoices
 ```
@@ -194,8 +197,9 @@ Bu komut:
 1. Gelen faturaları API'den çeker
 2. Gelen fatura XML'lerini çeker ve `incoming_invoice_xml_cache` içine yedekler
 3. Giden faturaları API'den çeker
-4. PostgreSQL'e kaydeder
-5. Normal eşleştirme ve ters eşleştirme Excel raporlarını üretir
+4. Giden fatura XML'lerini çeker ve `outgoing_invoice_xml_cache` içine yedekler
+5. PostgreSQL'e kaydeder
+6. Normal eşleştirme ve ters eşleştirme Excel raporlarını üretir
 
 İlk çalıştırma uzun sürebilir çünkü XML cache doldurulur.
 
@@ -253,12 +257,41 @@ Excel içerikleri:
 
 ---
 
-## 11. En Sık Kullanılan Komutlar
+## 11. Müşteri Ürün Fiyat Raporunu Oluştur
+
+Müşterilere kesilen giden faturaların ürün/fiyat detayları:
+
+```bash
+python3 scripts/export_customer_product_prices.py
+```
+
+Çıktı:
+
+```text
+kayıtlar/Musteri_Urun_Fiyatlari_YYYYMMDD_HHMMSS.xlsx
+```
+
+Excel içerikleri:
+- `Tüm Detaylar`
+- `Müşteri Özeti`
+- Her müşteri için ayrı sayfa
+
+Not: Ürün satırlarının dolması için `outgoing_invoice_xml_cache` tablosunda XML içerikleri bulunmalıdır. İlk kurulumda `--refresh-xml` ile pipeline çalıştırmak gerekir.
+
+---
+
+## 12. En Sık Kullanılan Komutlar
 
 Tek komutla çek, aktar, eşleştir:
 
 ```bash
 python3 scripts/run_invoice_pipeline.py
+```
+
+Tüm Excel raporları tek komutta (eşleştirme, ters eşleştirme, gelen/giden listeleri, agent geçmişi, fabrikalar, müşteri fiyat):
+
+```bash
+python3 scripts/run_invoice_pipeline.py --all-excel
 ```
 
 İlk kurulum veya XML cache yenileme:
@@ -267,10 +300,22 @@ python3 scripts/run_invoice_pipeline.py
 python3 scripts/run_invoice_pipeline.py --start-date 2026-01-01 --refresh-xml
 ```
 
+İlk kurulumda tüm raporları birlikte almak için:
+
+```bash
+python3 scripts/run_invoice_pipeline.py --start-date 2026-01-01 --refresh-xml --all-excel
+```
+
 Fabrika Excel'leri:
 
 ```bash
 python3 scripts/export_supplier_invoice_details.py
+```
+
+Müşteri ürün fiyat raporu:
+
+```bash
+python3 scripts/export_customer_product_prices.py
 ```
 
 Sadece gelen faturalar:
@@ -293,7 +338,7 @@ python3 scripts/run_invoice_pipeline.py --skip-ingest
 
 ---
 
-## 12. Claude Terminal İçin Hazır Talimat
+## 13. Claude Terminal İçin Hazır Talimat
 
 Yeni bilgisayarda Claude terminal açınca bu dosyayı yükleyip şu talimatı verebilirsin:
 

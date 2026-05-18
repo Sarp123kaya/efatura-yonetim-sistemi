@@ -21,6 +21,10 @@ import sys
 import time
 import sqlite3
 import re
+import base64
+import gzip
+import zipfile
+import io
 from datetime import datetime
 from pathlib import Path
 import getpass
@@ -30,7 +34,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Proje kök dizinini sys.path'e ekle
-project_root = Path(__file__).resolve().parent.parent.parent
+project_root = Path(__file__).resolve().parent.parent
 # TODO: Replace this sys.path hack with proper packaging/entrypoints.
 sys.path.insert(0, str(project_root))
 
@@ -155,12 +159,16 @@ class IsbasiAPIDataExtractor:
         # API endpoint'leri (sadece faturalar)
         self.endpoints = {
             'login': '/api/v1.0/user/integrationLogin',
-            'invoices': '/api/v1.0/invoices/invoices'
+            'invoices': '/api/v1.0/invoices/invoices',
+            'outgoing_invoice_ubl': os.getenv(
+                "ISBASI_OUTGOING_UBL_ENDPOINT",
+                "/api/v1.0/einvoices/DocumentUblDatawithuuid"
+            ) or "/api/v1.0/einvoices/DocumentUblDatawithuuid"
         }
         
         # Excel dosya yolları (sadece faturalar)
         # Proje kök dizinini bul
-        project_root = Path(__file__).resolve().parent.parent.parent
+        project_root = Path(__file__).resolve().parent.parent
         self.output_dir = project_root / "data" / "excel" / "api"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -176,7 +184,9 @@ class IsbasiAPIDataExtractor:
         # Sayfalama parametreleri
         self.pagination_config = {
             'page_size': 100,
-            'max_pages': 50,
+            # 2026 fatura sayısı arttıkça 50 sayfa yeni kayıtlara yetmiyordu.
+            # API toplam kayıt sayısını döndürmediğinde bu değer güvenlik sınırı olur.
+            'max_pages': 300,
             'delay_between_requests': 0.5
         }
         
@@ -187,6 +197,130 @@ class IsbasiAPIDataExtractor:
         logger.info("API Data Extractor başlatıldı")
         logger.info(f"Hedef veritabanı: {self.db_path}")
         logger.info(f"Fatura tipi: Sadece GİDEN faturalar (PURCHASE_INVOICE hariç)")
+
+    def _decode_ubl_content(self, content: str) -> Optional[str]:
+        """Decode base64 UBL content returned by İşbaşı document endpoints."""
+        if not content:
+            return None
+
+        try:
+            decoded_bytes = base64.b64decode(content)
+
+            try:
+                with zipfile.ZipFile(io.BytesIO(decoded_bytes)) as zf:
+                    filename = zf.namelist()[0]
+                    return zf.read(filename).decode('utf-8')
+            except zipfile.BadZipFile:
+                pass
+
+            try:
+                return gzip.decompress(decoded_bytes).decode('utf-8')
+            except gzip.BadGzipFile:
+                pass
+
+            try:
+                return decoded_bytes.decode('utf-8')
+            except UnicodeDecodeError:
+                return decoded_bytes.decode('iso-8859-9')
+        except Exception as e:
+            logger.error(f"UBL content decode hatası: {e}")
+            return None
+
+    def fetch_invoice_xml_for_outgoing(self, invoice: Dict) -> Tuple[Optional[str], str]:
+        """
+        Try to fetch outgoing invoice UBL/XML using known endpoint/parameter variants.
+
+        The outgoing list endpoint does not include product lines, so this method
+        probes the document endpoint with stable identifiers from the invoice row.
+        """
+        endpoint_candidates = [
+            self.endpoints.get('outgoing_invoice_ubl'),
+            "/api/v1.0/invoices/DocumentUblDatawithuuid",
+            "/api/v1.0/invoices/DocumentUblData",
+        ]
+        endpoint_candidates = [e for i, e in enumerate(endpoint_candidates) if e and e not in endpoint_candidates[:i]]
+
+        identifier_candidates = [
+            ("id", invoice.get("id")),
+            ("invoiceNumber", invoice.get("invoiceNumber")),
+            ("dispatchNumber", invoice.get("dispatchNumber")),
+            ("documentNumber", invoice.get("documentNumber")),
+        ]
+        param_names = ["uuid", "id", "invoiceId", "invoiceNo", "invoiceNumber"]
+        document_types = [1, 2, 0]
+
+        last_status = ""
+        for endpoint in endpoint_candidates:
+            for source_name, value in identifier_candidates:
+                if not value or str(value).strip().lower() == "numarasız":
+                    continue
+                for param_name in param_names:
+                    for document_type in document_types:
+                        params = {param_name: str(value), "type": document_type}
+                        try:
+                            response = self.session.get(
+                                f"{self.base_url}{endpoint}",
+                                params=params,
+                                timeout=self.timeout,
+                                verify=self.verify_ssl,
+                            )
+                        except Exception as e:
+                            last_status = f"{endpoint} {param_name}={source_name}: {e}"
+                            continue
+
+                        last_status = (
+                            f"{endpoint} {param_name}={source_name} "
+                            f"type={document_type}: HTTP {response.status_code}"
+                        )
+                        if response.status_code != 200:
+                            continue
+
+                        try:
+                            response.encoding = 'utf-8'
+                            response_data = response.json()
+                        except Exception as e:
+                            last_status = f"{last_status} JSON parse hatası: {e}"
+                            continue
+
+                        data = response_data.get("data", {}) if isinstance(response_data, dict) else {}
+                        content = data.get("content", "") if isinstance(data, dict) else ""
+                        xml_content = self._decode_ubl_content(content)
+                        if xml_content:
+                            return xml_content, f"{endpoint}|{param_name}|{source_name}|type={document_type}"
+
+        return None, last_status
+
+    def fetch_invoice_detail_for_outgoing(self, invoice: Dict) -> Tuple[Optional[Dict], str]:
+        """Fetch outgoing invoice detail JSON that contains invoiceLines."""
+        invoice_id = invoice.get("id")
+        if not invoice_id:
+            return None, "missing invoice id"
+
+        endpoint = f"/api/v1.0/invoices/{invoice_id}"
+        try:
+            response = self.session.get(
+                f"{self.base_url}{endpoint}",
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+            )
+        except Exception as e:
+            return None, f"{endpoint}: {e}"
+
+        status = f"{endpoint}: HTTP {response.status_code}"
+        if response.status_code != 200:
+            return None, status
+
+        try:
+            response.encoding = "utf-8"
+            payload = response.json()
+        except Exception as e:
+            return None, f"{status} JSON parse hatası: {e}"
+
+        data = payload.get("data", {}) if isinstance(payload, dict) else {}
+        if isinstance(data, dict) and data.get("invoiceLines"):
+            return payload, endpoint
+
+        return None, f"{status} invoiceLines yok"
     
     @staticmethod
     def clean_bank_info_from_description(description: str) -> str:
@@ -350,7 +484,14 @@ class IsbasiAPIDataExtractor:
             # Güvenlik: Şifreyi bellekten temizle
             self.password = None
     
-    def fetch_data_with_pagination(self, endpoint: str, data_type: str, only_outgoing: bool = False) -> Tuple[bool, List[Dict]]:
+    def fetch_data_with_pagination(
+        self,
+        endpoint: str,
+        data_type: str,
+        only_outgoing: bool = False,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Tuple[bool, List[Dict]]:
         """
         Sayfalama ile veri çeker
         
@@ -358,36 +499,48 @@ class IsbasiAPIDataExtractor:
             endpoint: API endpoint'i
             data_type: Veri türü (customers, invoices, products)
             only_outgoing: Sadece giden faturaları çek (PURCHASE_INVOICE hariç)
+            start_date: API tarih filtresi başlangıcı
+            end_date: API tarih filtresi bitişi
             
         Returns:
             Tuple[bool, List[Dict]]: (başarı durumu, veri listesi)
         """
         all_data = []
         page = 1
-        total_pages = 0
+        total_count = 0
+        start_date = start_date or datetime(2026, 1, 1)
+        end_date = end_date or datetime(2026, 12, 31, 23, 59, 59)
+        start_value = start_date.strftime("%Y-%m-%dT00:00:00")
+        end_value = end_date.strftime("%Y-%m-%dT23:59:59")
         
         if only_outgoing:
-            print(f"📊 {data_type.upper()} verileri çekiliyor (sadece GİDEN faturalar, 2026 yılı)...")
+            print(
+                f"📊 {data_type.upper()} verileri çekiliyor "
+                f"(sadece GİDEN faturalar, {start_date.date()} - {end_date.date()})..."
+            )
         else:
-            print(f"📊 {data_type.upper()} verileri çekiliyor (2026 yılı)...")
+            print(f"📊 {data_type.upper()} verileri çekiliyor ({start_date.date()} - {end_date.date()})...")
         
         try:
             while page <= self.pagination_config['max_pages']:
-                # 2026 yılı verileri için tarih filtresi
+                # İstenen tarih aralığını API tarafında filtrele; aksi halde yeni kayıtlar
+                # sayfalama/sıralama sınırlarında kaçabiliyor.
                 payload = {
                         "filters": [
                             {
                                 "columnName": "date",
                                 "operator": 5,  # >= (Büyük veya eşit)
-                                "value": "2026-01-01T00:00:00"
+                                "value": start_value
                             },
                             {
                                 "columnName": "date",
                                 "operator": 2,  # <= (Küçük veya eşit)
-                                "value": "2026-12-31T23:59:59"
+                                "value": end_value
                             }
                         ],
-                        "sorting": {},
+                        "sorting": {
+                            "date": -1
+                        },
                         "paging": {
                             "currentPage": page,
                             "pageSize": self.pagination_config['page_size']
@@ -412,7 +565,8 @@ class IsbasiAPIDataExtractor:
                         logger.error("❌ Yetkilendirme hatası")
                         return False, []
                     logger.error(f"❌ HTTP {response.status_code}")
-                    break
+                    logger.error(f"Response: {response.text[:500]}")
+                    return False, []
                 
                 # Türkçe karakter desteği için encoding'i zorla UTF-8 yap
                 response.encoding = 'utf-8'
@@ -425,15 +579,15 @@ class IsbasiAPIDataExtractor:
                         page_data = response_data['data'].get('data', [])
                         page_count = response_data['data'].get('count', 0)
                         if page == 1:
-                            total_pages = page_count
+                            total_count = page_count
                     elif 'data' in response_data:
                         page_data = response_data['data']
                         
                     # Sayfa bilgilerini al
                     if 'totalPages' in response_data:
-                        total_pages = response_data['totalPages']
+                        total_count = int(response_data['totalPages']) * self.pagination_config['page_size']
                     elif 'pageCount' in response_data:
-                        total_pages = response_data['pageCount']
+                        total_count = int(response_data['pageCount']) * self.pagination_config['page_size']
                         
                 elif isinstance(response_data, list):
                     page_data = response_data
@@ -451,6 +605,8 @@ class IsbasiAPIDataExtractor:
                             if field in item and item[field] is not None:
                                 item[field] = str(item[field])
                 
+                raw_page_count = len(page_data)
+
                 # Python tarafında filtrele (API filtresi HTTP 500 veriyor)
                 if only_outgoing and data_type in ['all_invoices', 'invoices']:
                     # Sadece giden faturaları al (PURCHASE_INVOICE hariç)
@@ -463,9 +619,13 @@ class IsbasiAPIDataExtractor:
                 all_data.extend(page_data)
                 print(f"   📄 Sayfa {page}: {len(page_data)} kayıt (giden faturalar)")
                 
-                # Toplam sayfa sayısını kontrol et
-                if total_pages > 0 and page >= total_pages:
-                    logger.info(f"📄 Son sayfa ({total_pages}) ulaşıldı")
+                # Son sayfayı ham API sayfa boyuna veya toplam kayıt sayısına göre anla.
+                if raw_page_count < self.pagination_config['page_size']:
+                    logger.info(f"📄 Son sayfa ulaşıldı (sayfa {page})")
+                    break
+
+                if total_count > 0 and page * self.pagination_config['page_size'] >= int(total_count):
+                    logger.info(f"📄 Son sayfa ulaşıldı ({total_count} toplam kayıt)")
                     break
                 
                 page += 1

@@ -1,0 +1,24 @@
+{% if jobs %}
+<table>
+    <thead>
+        <tr>
+            <th>Durum</th>
+            <th>İşlem</th>
+            <th>Başlangıç</th>
+            <th>Dosya</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for job in jobs %}
+        <tr>
+            <td><span class="badge {{ job.status }}">{{ job.status }}</span></td>
+            <td><a href="{{ url_for('job_detail', job_id=job.id) }}">{{ actions.get(job.type).label if actions.get(job.type) else job.type }}</a></td>
+            <td>{{ job.started_at or job.created_at }}</td>
+            <td>{{ job.created_files|length }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="muted">Henüz job yok.</p>
+{% endif %}

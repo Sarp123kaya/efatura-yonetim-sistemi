@@ -16,6 +16,7 @@ import pandas as pd
 from datetime import datetime
 from backend.core.db import db
 from backend.core.incoming_xml_cache import ensure_xml_cache_schema
+from report_cleanup import cleanup_old_reports
 
 SUPPLIER_TO_PREFIX = {
     'AK': 'A',
@@ -178,12 +179,14 @@ def get_reverse_matching_data():
 def generate_excel(df, output_dir='kayıtlar'):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    cleanup_old_reports(output_path, ["Ters_Eslestirme_*.xlsx"])
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = output_path / f'Ters_Eslestirme_{timestamp}.xlsx'
+    df_export = df.drop(columns=['Para Birimi'], errors='ignore')
 
     with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Gelen Kontrol')
+        df_export.to_excel(writer, index=False, sheet_name='Gelen Kontrol')
 
         workbook = writer.book
         worksheet = writer.sheets['Gelen Kontrol']
@@ -197,18 +200,18 @@ def generate_excel(df, output_dir='kayıtlar'):
         missing_fmt = workbook.add_format({'bg_color': '#FFC7CE', 'border': 1, 'bold': True})
         nocode_fmt = workbook.add_format({'bg_color': '#FFEB9C', 'border': 1, 'bold': True})
 
-        for col_num, value in enumerate(df.columns.values):
+        for col_num, value in enumerate(df_export.columns.values):
             worksheet.write(0, col_num, value, header_fmt)
 
-        widths = [12, 22, 35, 16, 10, 16, 22, 35, 16, 14, 16]
+        widths = [12, 22, 35, 16, 16, 22, 35, 16, 14, 16]
         for i, w in enumerate(widths):
             worksheet.set_column(i, i, w)
 
-        for row_num in range(1, len(df) + 1):
-            r = df.iloc[row_num - 1]
-            worksheet.write(row_num, 3, r['Gelen Tutar (TL)'], currency_fmt)
-            worksheet.write(row_num, 8, r['Giden Tutar (TL)'], currency_fmt)
-            worksheet.write(row_num, 9, r['Fark (TL)'], currency_fmt)
+        for row_num in range(1, len(df_export) + 1):
+            r = df_export.iloc[row_num - 1]
+            for column in ['Gelen Tutar (TL)', 'Giden Tutar (TL)', 'Fark (TL)']:
+                if column in df_export.columns:
+                    worksheet.write(row_num, df_export.columns.get_loc(column), r[column], currency_fmt)
 
             durum = r['Durum']
             if durum == 'Eşleşti':
@@ -217,9 +220,9 @@ def generate_excel(df, output_dir='kayıtlar'):
                 fmt = missing_fmt
             else:
                 fmt = nocode_fmt
-            worksheet.write(row_num, 10, durum, fmt)
+            worksheet.write(row_num, df_export.columns.get_loc('Durum'), durum, fmt)
 
-        last = len(df) + 3
+        last = len(df_export) + 3
         matched = len(df[df['Durum'] == 'Eşleşti'])
         karsilsiz = len(df[df['Durum'] == 'Karşılıksız'])
         no_code = len(df[df['Durum'] == 'İrsaliye yok'])
@@ -235,7 +238,7 @@ def generate_excel(df, output_dir='kayıtlar'):
         worksheet.write(last + 3, 0, f'İrsaliye yok: {no_code}', nocode_fmt)
         if invalid > 0:
             worksheet.write(last + 4, 0, f'Geçersiz kod: {invalid}', nocode_fmt)
-        worksheet.write(last + 5, 0, f'Toplam satır: {len(df)}', stat_header)
+        worksheet.write(last + 5, 0, f'Toplam satır: {len(df_export)}', stat_header)
 
         if karsilsiz > 0:
             karsilsiz_df = df[df['Durum'] == 'Karşılıksız']

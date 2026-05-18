@@ -34,7 +34,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Proje kök dizinini sys.path'e ekle
-project_root = Path(__file__).resolve().parent.parent.parent
+project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 # Optional: load local .env without extra dependencies
@@ -180,7 +180,7 @@ class IsbasiAPIIncomingInvoicesExtractor:
         # Sayfalama parametreleri
         self.pagination_config = {
             'page_size': 100,
-            'max_pages': 50,
+            'max_pages': 300,
             'delay_between_requests': 0.5
         }
         
@@ -441,7 +441,11 @@ class IsbasiAPIIncomingInvoicesExtractor:
 
         return 0
     
-    def fetch_incoming_invoices_with_pagination(self) -> Tuple[bool, List[Dict]]:
+    def fetch_incoming_invoices_with_pagination(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Tuple[bool, List[Dict]]:
         """
         Sayfalama ile gelen fatura verilerini çeker (Sadece 2026 yılı)
         
@@ -451,27 +455,31 @@ class IsbasiAPIIncomingInvoicesExtractor:
         all_data = []
         page = 1
         total_count = 0
+        start_date = start_date or datetime(2026, 1, 1)
+        end_date = end_date or datetime(2026, 12, 31, 23, 59, 59)
+        start_value = start_date.strftime("%Y-%m-%dT00:00:00")
+        end_value = end_date.strftime("%Y-%m-%dT23:59:59")
         
-        print(f"📊 GELEN FATURA verileri çekiliyor (Sadece 2026 yılı)...")
+        print(f"📊 GELEN FATURA verileri çekiliyor ({start_date.date()} - {end_date.date()})...")
         
         try:
             while page <= self.pagination_config['max_pages']:
-                # Gelen faturalar için özel payload - 2026 yılı filtresi
+                # İstenen tarih aralığını API tarafında filtrele.
                 payload = {
                     "filters": [
                         {
                             "columnName": "issueDate",
                             "operator": 5,  # Büyük veya eşit (>=)
-                            "value": "2026-01-01T00:00:00"
+                            "value": start_value
                         },
                         {
                             "columnName": "issueDate",
                             "operator": 2,  # Küçük veya eşit (<=)
-                            "value": "2026-12-31T23:59:59"
+                            "value": end_value
                         }
                     ],
                     "sorting": {
-                        "issueDate": 1  # Tarihe göre artan sırada
+                        "issueDate": -1
                     },
                     "paging": {
                         "currentPage": page,
@@ -498,7 +506,7 @@ class IsbasiAPIIncomingInvoicesExtractor:
                         return False, []
                     logger.error(f"❌ HTTP {response.status_code}")
                     logger.error(f"Response: {response.text[:500]}")
-                    break
+                    return False, []
                 
                 response.encoding = 'utf-8'
                 response_data = response.json()

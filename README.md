@@ -13,6 +13,17 @@ python3 scripts/run_invoice_pipeline.py
 
 Ana çıktı dosyaları varsayılan olarak `kayıtlar/` klasörüne yazılır.
 
+## Web Panel
+
+CLI komutlarını tarayıcıdan job olarak çalıştırmak için Flask tabanlı web panel eklenmiştir.
+
+```bash
+flask --app backend.web.app run --host 127.0.0.1 --port 8000
+python3 scripts/run_web_worker.py
+```
+
+Panel; pipeline başlatma, Excel rapor üretme, job loglarını izleme ve `kayıtlar/` altındaki raporları indirme ekranları sağlar. VPS/Docker/systemd kurulum detayları için `docs/WEB_PANEL.md` dosyasına bakın.
+
 ## Güncel Komutlar
 
 ```bash
@@ -22,8 +33,17 @@ python3 scripts/run_invoice_pipeline.py
 # Sadece mevcut DB verisiyle normal + ters eşleştirme Excel’lerini üret
 python3 scripts/run_invoice_pipeline.py --skip-ingest
 
+# Tam paket: eşleştirme + ters eşleştirme + Gelen/Giden listeleri + Agent + AK GIPS & FULLBOARD + müşteri ürün fiyat
+python3 scripts/run_invoice_pipeline.py --all-excel
+
+# İlk kurulum veya XML cache tam yenileme ile tam paket
+python3 scripts/run_invoice_pipeline.py --start-date 2026-01-01 --refresh-xml --all-excel
+
 # AK GIPS ve FULLBOARD ürün detay Excel’lerini üret
 python3 scripts/export_supplier_invoice_details.py
+
+# Müşteri bazlı giden fatura ürün/fiyat Excel’ini üret
+python3 scripts/export_customer_product_prices.py
 
 # Tüm DB verilerini Excel’e aktar
 python3 scripts/export_to_excel.py --type all
@@ -81,6 +101,7 @@ psql "$DB_URL" -f sql/stateful_ingestion_schema_v2.sql
 psql "$DB_URL" -f sql/migration_v2.2_despatch_improvements.sql
 psql "$DB_URL" -f sql/migration_irsaliye_override.sql
 psql "$DB_URL" -f sql/migration_incoming_xml_cache.sql
+psql "$DB_URL" -f sql/migration_outgoing_xml_cache.sql
 ```
 
 Opsiyonel fabrika kâr akışı için `sql/migration_factory_kar.sql`, `scripts/sync_factory_kar.py` ve `scripts/export_fabrikalar.py` kullanılır.
@@ -93,6 +114,7 @@ Opsiyonel fabrika kâr akışı için `sql/migration_factory_kar.sql`, `scripts/
 
 - `QUICKSTART.md`: kısa kurulum ve ilk çalıştırma
 - `docs/KOMUTLAR.md`: tüm operasyon komutları
+- `docs/WEB_PANEL.md`: web panel ve VPS dağıtım rehberi
 - `docs/PROJECT_STRUCTURE.md`: klasör mimarisi
 - `docs/TROUBLESHOOTING.md`: hata çözüm notları
 - `docs/TEMIZLIK_ANALIZI.md`: aktif/legacy dosya ayrımı

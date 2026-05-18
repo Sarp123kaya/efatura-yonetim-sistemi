@@ -211,14 +211,23 @@ class IncomingInvoiceAgent:
         
         return counts
     
-    def fetch_with_retry(self, extractor, max_retries: int = None) -> List[Dict]:
+    def fetch_with_retry(
+        self,
+        extractor,
+        max_retries: int = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> List[Dict]:
         """Fetch invoices with retry logic"""
         max_retries = max_retries or config.MAX_RETRIES
         retry_delay = config.RETRY_DELAY
         
         for attempt in range(max_retries):
             try:
-                success, invoices_data = extractor.fetch_incoming_invoices_with_pagination()
+                success, invoices_data = extractor.fetch_incoming_invoices_with_pagination(
+                    start_date=start_date,
+                    end_date=end_date,
+                )
                 if success:
                     return invoices_data
                 else:
@@ -326,13 +335,10 @@ class IncomingInvoiceAgent:
             
             # Fetch invoices with retry
             logger.info("📥 Fetching invoices from API...")
-            invoices_data = self.fetch_with_retry(extractor)
+            invoices_data = self.fetch_with_retry(extractor, start_date=start_date, end_date=end_date)
             
             if not invoices_data:
-                logger.warning("⚠️  No invoices fetched")
-                self.end_time = datetime.now()
-                self._print_summary()
-                return
+                raise Exception("Gelen fatura API'den veri çekilemedi; stale Excel üretmemek için akış durduruldu.")
             
             self.stats['total_fetched'] = len(invoices_data)
             logger.info(f"✅ Fetched {len(invoices_data)} invoices")

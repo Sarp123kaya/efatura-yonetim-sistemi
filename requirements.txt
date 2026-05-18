@@ -1,8 +1,8 @@
 # E-Fatura Yönetim Sistemi - Gerekli Paketler
 
-# Web Dashboard (opsiyonel)
-# Not: Bu repoda şu an Flask/Django kullanan bir modül yok. İleride web arayüzü eklenirse kullanılabilir.
+# Web Dashboard
 Flask>=3.0.0
+gunicorn>=21.2.0
 Django>=4.2.0
 
 # Excel İşlemleri

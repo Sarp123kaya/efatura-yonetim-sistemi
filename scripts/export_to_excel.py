@@ -11,8 +11,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pandas as pd
 from datetime import datetime
 import json
+from openpyxl import load_workbook
 
 from backend.core.db import db
+from report_cleanup import cleanup_old_reports
 
 def format_jsonb_for_excel(data):
     """Format JSONB data for Excel"""
@@ -27,9 +29,29 @@ def format_jsonb_for_excel(data):
         return ", ".join(str(x) for x in data)
     return str(data)
 
+
+def save_excel_with_number_formats(df, output_file, number_columns):
+    """Save DataFrame and keep selected columns as numeric Excel cells."""
+    df.to_excel(output_file, index=False, engine='openpyxl')
+    wb = load_workbook(output_file)
+    ws = wb.active
+    header_to_idx = {
+        cell.value: cell.column
+        for cell in ws[1]
+        if cell.value
+    }
+    for column in number_columns:
+        col_idx = header_to_idx.get(column)
+        if not col_idx:
+            continue
+        for row in range(2, ws.max_row + 1):
+            ws.cell(row=row, column=col_idx).number_format = '#,##0.00'
+    wb.save(output_file)
+
 def export_incoming_invoices(output_file):
     """Export incoming invoices to Excel"""
     print("📥 Exporting incoming invoices...")
+    cleanup_old_reports(Path(output_file).parent, ["Gelen_Faturalar_*.xlsx"])
     
     query = """
         SELECT 
@@ -83,9 +105,20 @@ def export_incoming_invoices(output_file):
         'created_at': 'Oluşturma Tarihi',
         'updated_at': 'Güncelleme Tarihi'
     })
+    df = df.drop(
+        columns=[
+            'UUID',
+            'TCKN/VKN',
+            'Para Birimi',
+            'Değişiklik Tipi',
+            'Son Değişiklik',
+            'Oluşturma Tarihi',
+        ],
+        errors='ignore',
+    )
     
     # Save to Excel
-    df.to_excel(output_file, index=False, engine='openpyxl')
+    save_excel_with_number_formats(df, output_file, ['Tutar', 'KDV Matrahı'])
     print(f"✅ Exported {len(df)} incoming invoices to {output_file}")
     
     return len(df)
@@ -93,6 +126,7 @@ def export_incoming_invoices(output_file):
 def export_outgoing_invoices(output_file):
     """Export outgoing invoices to Excel"""
     print("📤 Exporting outgoing invoices...")
+    cleanup_old_reports(Path(output_file).parent, ["Giden_Faturalar_*.xlsx"])
     
     query = """
         SELECT 
@@ -144,9 +178,17 @@ def export_outgoing_invoices(output_file):
         'created_at': 'Oluşturma Tarihi',
         'updated_at': 'Güncelleme Tarihi'
     })
+    df = df.drop(
+        columns=[
+            'Değişiklik Tipi',
+            'Son Değişiklik',
+            'Oluşturma Tarihi',
+        ],
+        errors='ignore',
+    )
     
     # Save to Excel
-    df.to_excel(output_file, index=False, engine='openpyxl')
+    save_excel_with_number_formats(df, output_file, ['Toplam (TL)', 'Vergiye Esas'])
     print(f"✅ Exported {len(df)} outgoing invoices to {output_file}")
     
     return len(df)
@@ -154,6 +196,7 @@ def export_outgoing_invoices(output_file):
 def export_agent_runs(output_file):
     """Export agent runs to Excel"""
     print("🤖 Exporting agent runs...")
+    cleanup_old_reports(Path(output_file).parent, ["Agent_Calismalari_*.xlsx"])
     
     query = """
         SELECT 

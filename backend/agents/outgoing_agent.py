@@ -19,6 +19,7 @@ import json
 import hashlib
 import time
 import uuid as uuid_lib
+import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -33,6 +34,12 @@ from backend.core.db import db
 from backend.core.agent_state import get_state, set_state, get_start_date_with_lookback
 from backend.core.normalize import extract_irsaliye_codes_from_description, clean_description
 from backend.core.agent_run_logger import AgentRunLogger
+from backend.core.outgoing_xml_cache import (
+    ensure_outgoing_xml_cache_schema,
+    get_cached_outgoing_xml,
+    upsert_outgoing_xml_cache,
+)
+from backend.core.ubl_line_parser import parse_invoice_lines, parse_outgoing_invoice_detail_lines
 
 # Configure logging
 logging.basicConfig(
@@ -43,19 +50,37 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def parse_date(value: Optional[str]) -> Optional[datetime]:
+    """Parse YYYY-MM-DD CLI date."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"Geçersiz tarih: {value}. Format YYYY-MM-DD olmalı."
+        ) from exc
+
+
 class OutgoingInvoiceAgent:
     """Production-ready outgoing invoice ingestion agent"""
     
-    def __init__(self, run_id: Optional[str] = None):
+    def __init__(self, run_id: Optional[str] = None, refresh_xml_cache: bool = False):
         self.run_id = run_id or f"outgoing_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid_lib.uuid4().hex[:8]}"
         self.agent_name = 'outgoing_agent'
+        self.refresh_xml_cache = refresh_xml_cache
         self.stats = {
             'insert': 0,
             'update': 0,
             'nochange': 0,
             'error': 0,
             'total_fetched': 0,
-            'batch_count': 0
+            'batch_count': 0,
+            'xml_cache_hit': 0,
+            'xml_cache_miss': 0,
+            'xml_cache_written': 0,
+            'xml_cache_refreshed': 0,
+            'xml_cache_failed': 0,
         }
         self.start_time = None
         self.end_time = None
@@ -201,8 +226,81 @@ class OutgoingInvoiceAgent:
         counts['batch_count'] = batch_count
         
         return counts
+
+    def populate_xml_cache(self, extractor, invoices: List[Dict]) -> None:
+        """Fetch/cache outgoing invoice XML line items when missing or refreshed."""
+        ensure_outgoing_xml_cache_schema()
+
+        for idx, invoice in enumerate(invoices, 1):
+            invoice_id = self.get_technical_id(invoice)
+            if not invoice_id:
+                continue
+
+            if idx % 10 == 0:
+                logger.info(f"📦 Outgoing XML cache progress: {idx}/{len(invoices)}")
+
+            cached = None if self.refresh_xml_cache else get_cached_outgoing_xml(invoice_id)
+            if cached:
+                self.stats['xml_cache_hit'] += 1
+                continue
+
+            self.stats['xml_cache_miss'] += 1
+
+            detail_payload, fetch_key = extractor.fetch_invoice_detail_for_outgoing(invoice)
+            if detail_payload:
+                try:
+                    line_items = parse_outgoing_invoice_detail_lines(detail_payload)
+                    xml_content = json.dumps(detail_payload, ensure_ascii=False)
+                except Exception as e:
+                    self.stats['xml_cache_failed'] += 1
+                    logger.warning("Outgoing detay parse hatası (%s): %s", invoice_id, e)
+                    continue
+            else:
+                xml_content, fetch_key = extractor.fetch_invoice_xml_for_outgoing(invoice)
+                if not xml_content:
+                    self.stats['xml_cache_failed'] += 1
+                    logger.debug(
+                        "Outgoing detay/XML çekilemedi (%s / %s): %s",
+                        invoice_id,
+                        invoice.get('invoiceNumber', ''),
+                        fetch_key,
+                    )
+                    if self.stats['xml_cache_failed'] >= 5 and self.stats['xml_cache_written'] == 0:
+                        logger.warning(
+                            "İlk 5 giden fatura için detay/XML çekilemedi. "
+                            "API endpoint/parametre hatalı olabilir; cache denemesi bu çalıştırmada durduruldu."
+                        )
+                        break
+                    continue
+
+                try:
+                    line_items = parse_invoice_lines(xml_content)
+                except Exception as e:
+                    self.stats['xml_cache_failed'] += 1
+                    logger.warning("Outgoing XML parse hatası (%s): %s", invoice_id, e)
+                    continue
+
+            upsert_outgoing_xml_cache(
+                invoice_id=invoice_id,
+                invoice_no=str(invoice.get('invoiceNumber', '')),
+                firm_name=str(invoice.get('firmName', '')),
+                xml_content=xml_content,
+                line_items=line_items,
+                fetch_key=fetch_key,
+            )
+            self.stats['xml_cache_written'] += 1
+            if self.refresh_xml_cache:
+                self.stats['xml_cache_refreshed'] += 1
+
+            time.sleep(0.3)
     
-    def fetch_with_retry(self, extractor, max_retries: int = None) -> List[Dict]:
+    def fetch_with_retry(
+        self,
+        extractor,
+        max_retries: int = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> List[Dict]:
         """Fetch invoices with retry logic"""
         max_retries = max_retries or config.MAX_RETRIES
         retry_delay = config.RETRY_DELAY
@@ -212,7 +310,9 @@ class OutgoingInvoiceAgent:
                 success, invoices_data = extractor.fetch_data_with_pagination(
                     extractor.endpoints['invoices'],
                     'invoices',
-                    only_outgoing=True
+                    only_outgoing=True,
+                    start_date=start_date,
+                    end_date=end_date,
                 )
                 if success:
                     return invoices_data
@@ -240,7 +340,8 @@ class OutgoingInvoiceAgent:
         # Log run start to database
         metadata = {
             'start_date': start_date.isoformat() if start_date else None,
-            'end_date': end_date.isoformat() if end_date else None
+            'end_date': end_date.isoformat() if end_date else None,
+            'refresh_xml_cache': self.refresh_xml_cache,
         }
         self.run_logger.start_run(metadata=metadata)
         
@@ -317,13 +418,10 @@ class OutgoingInvoiceAgent:
             
             # Fetch invoices
             logger.info("📥 Fetching invoices from API...")
-            invoices_data = self.fetch_with_retry(extractor)
+            invoices_data = self.fetch_with_retry(extractor, start_date=start_date, end_date=end_date)
             
             if not invoices_data:
-                logger.warning("⚠️  No invoices fetched")
-                self.end_time = datetime.now()
-                self._print_summary()
-                return
+                raise Exception("Giden fatura API'den veri çekilemedi; stale Excel üretmemek için akış durduruldu.")
             
             self.stats['total_fetched'] = len(invoices_data)
             logger.info(f"✅ Fetched {len(invoices_data)} invoices")
@@ -348,6 +446,9 @@ class OutgoingInvoiceAgent:
                     filtered.append(invoice)
             
             logger.info(f"📊 {len(filtered)} invoices in date range")
+
+            logger.info("📦 Populating outgoing invoice XML cache...")
+            self.populate_xml_cache(extractor, filtered)
             
             # Batch upsert
             logger.info("💾 Upserting to database...")
@@ -412,6 +513,14 @@ class OutgoingInvoiceAgent:
         logger.info(f"⚪ Unchanged: {self.stats['nochange']}")
         logger.info(f"❌ Errors: {self.stats['error']}")
         logger.info(f"📦 Batches: {self.stats['batch_count']}")
+        logger.info(
+            "🧾 XML cache: "
+            f"{self.stats['xml_cache_hit']} hit, "
+            f"{self.stats['xml_cache_miss']} miss, "
+            f"{self.stats['xml_cache_written']} yazıldı, "
+            f"{self.stats['xml_cache_refreshed']} refresh, "
+            f"{self.stats['xml_cache_failed']} hata"
+        )
         logger.info(f"🖥️  Host: {self.run_logger.host}")
         logger.info(f"🏷️  Version: {self.run_logger.version}")
         logger.info("=" * 70)
@@ -419,9 +528,30 @@ class OutgoingInvoiceAgent:
 
 def main():
     """Main entry point"""
+    parser = argparse.ArgumentParser(description='Run outgoing invoice ingestion agent')
+    parser.add_argument(
+        '--start-date',
+        type=parse_date,
+        help='Başlangıç tarihi (YYYY-MM-DD). Verilmezse agent state/lookback kullanılır.'
+    )
+    parser.add_argument(
+        '--end-date',
+        type=parse_date,
+        help='Bitiş tarihi (YYYY-MM-DD). Verilmezse bugün kullanılır.'
+    )
+    parser.add_argument(
+        '--refresh-xml',
+        action='store_true',
+        help='Cache olsa bile giden fatura detaylarını/XML cache içeriklerini yeniden çek'
+    )
+    args = parser.parse_args()
+
+    if args.start_date and args.end_date and args.start_date > args.end_date:
+        parser.error("--start-date, --end-date değerinden büyük olamaz.")
+
     try:
-        agent = OutgoingInvoiceAgent()
-        agent.run()
+        agent = OutgoingInvoiceAgent(refresh_xml_cache=args.refresh_xml)
+        agent.run(start_date=args.start_date, end_date=args.end_date)
     except KeyboardInterrupt:
         logger.info("\n❌ Agent interrupted by user")
         sys.exit(1)

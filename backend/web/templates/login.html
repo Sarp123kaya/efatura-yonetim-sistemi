@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Giriş - E-Fatura Web Panel{% endblock %}
+{% block content %}
+<section class="auth-card">
+    <h1>Panele Giriş</h1>
+    <p class="muted">VPS kullanımında `WEB_ADMIN_USER`, `WEB_ADMIN_PASSWORD` ve `WEB_SECRET_KEY` değerlerini `.env` içinde ayarlayın.</p>
+    <form method="post" class="stack">
+        <label>
+            Kullanıcı adı
+            <input type="text" name="username" autocomplete="username" required autofocus>
+        </label>
+        <label>
+            Parola
+            <input type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit">Giriş Yap</button>
+    </form>
+</section>
+{% endblock %}

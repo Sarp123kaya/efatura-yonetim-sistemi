@@ -10,13 +10,36 @@ Projedeki tüm çalıştırılabilir komutların referans rehberi.
 
 Bu komutlar İşbaşı API'sine bağlanıp faturaları PostgreSQL veritabanına kaydeder. Çalıştırıldığında API şifresi sorulur.
 
+## Web Panel
+
+CLI komutlarını butonlarla çalıştırmak için:
+
+```bash
+flask --app backend.web.app run --host 127.0.0.1 --port 8000
+python3 scripts/run_web_worker.py
+```
+
+Web panel job kuyruğu için `sql/migration_web_jobs.sql` uygulanmalıdır. `./scripts/setup_postgres.sh` bu migration'ı otomatik uygular.
+
 ### Tek Komut: Çek, DB'ye Aktar, Eşleştir ve Excel Üret
 
 ```bash
 python3 scripts/run_invoice_pipeline.py
 ```
 
-Sırasıyla gelen faturaları çeker, giden faturaları çeker, ikisini PostgreSQL'e aktarır ve hem normal eşleştirme hem ters eşleştirme Excel raporlarını oluşturur. Varsayılan çıktılar: `kayıtlar/Fatura_Eslestirme_YYYYMMDD_HHMMSS.xlsx` ve `kayıtlar/Ters_Eslestirme_YYYYMMDD_HHMMSS.xlsx`
+Sırasıyla gelen faturaları çeker, giden faturaları çeker, ikisini PostgreSQL'e aktarır, hem normal eşleştirme hem ters eşleştirme Excel raporlarını oluşturur. Ayrıca gelen e-irsaliyeleri İşbaşı API'den çekip giden faturalarla eşleştiren `kayıtlar/Irsaliye_Giden_Fatura_Eslestirme_YYYYMMDD_HHMMSS.xlsx` raporunu üretir. Varsayılan PDF açıklama klasörü: `data/incoming_despatch_pdfs`.
+
+**Tek komutta tüm Excel raporları** (eşleştirme + ters eşleştirme + `Gelen_Faturalar` + `Giden_Faturalar` + `Agent_Calismalari` + AK GIPS & FULLBOARD fabrika dosyaları + `Musteri_Urun_Fiyatlari`):
+
+```bash
+python3 scripts/run_invoice_pipeline.py --all-excel
+```
+
+İlk kurulum veya XML cache’i tam sıfırdan doldurmak için:
+
+```bash
+python3 scripts/run_invoice_pipeline.py --start-date 2026-01-01 --refresh-xml --all-excel
+```
 
 Opsiyonel kullanım:
 
@@ -27,10 +50,23 @@ python3 scripts/run_invoice_pipeline.py --start-date 2026-01-01 --end-date 2026-
 # Mevcut DB verisiyle sadece eşleştirme Excel'i üret
 python3 scripts/run_invoice_pipeline.py --skip-ingest
 
+# Gelen e-irsaliye adımını atla
+python3 scripts/run_invoice_pipeline.py --skip-despatches
+
+# Gelen e-irsaliye plaka/sevk yeri için farklı PDF klasörü kullan
+python3 scripts/run_invoice_pipeline.py --despatch-description-pdf "data/incoming_despatch_pdfs"
+
+# Sadece gelen e-irsaliye raporunu güncelle
+# Not: --fetch-descriptions kullanıldığında rapordan önce giden faturalar da güncellenir.
+python3 scripts/probe_incoming_despatches.py --fetch-descriptions --description-pdf "data/incoming_despatch_pdfs"
+
+# Mevcut DB ile tüm Excel paketini üret (API çekmeden)
+python3 scripts/run_invoice_pipeline.py --skip-ingest --all-excel
+
 # Sadece normal eşleştirme raporunu üret, ters kontrolü atla
 python3 scripts/run_invoice_pipeline.py --skip-reverse
 
-# Normalde eski XML'leri cache'ten kullanır. Gerekirse tüm gelen XML'leri yeniden çek
+# Normalde eski XML'leri cache'ten kullanır. Gerekirse gelen ve giden XML cache'ini yeniden çek
 python3 scripts/run_invoice_pipeline.py --refresh-xml
 
 # Çıktı klasörünü değiştir
@@ -64,6 +100,50 @@ python3 backend/agents/incoming_agent.py && python3 backend/agents/outgoing_agen
 ---
 
 ## Excel Çıktıları
+
+### Müşteri Çekleri Dry-Run Raporu
+
+```bash
+python3 scripts/import_customer_checks.py /path/to/musteri_cekleri.xlsx
+```
+
+Excel/CSV/PDF/TXT/görsel dosyalarındaki müşteri çeklerini okur, İşbaşı cari listesiyle VKN/TCKN ve unvan üzerinden eşleştirir, mükerrerlik kontrolü yapar ve `kayıtlar/Musteri_Cek_Dry_Run_YYYYMMDD_HHMMSS.xlsx` raporunu üretir. Aynı çalışmada `kayıtlar/Cek_Havuzu_Raporu_YYYYMMDD_HHMMSS.xlsx` dosyası da oluşur. Bu komut varsayılan olarak İşbaşı'na ödeme yazmaz. `--execute` verilse bile Swagger'da doğrulanmış müşteri tahsilatı/çek endpoint'i bulunana kadar gerçek yazım engellenir.
+
+Yerel firma JSON dosyasıyla API'ye bağlanmadan test etmek için:
+
+```bash
+python3 scripts/import_customer_checks.py /path/to/musteri_cekleri.xlsx --firms-json /path/to/firms.json --skip-audit-db
+```
+
+Birden fazla müşteri ekstresi aynı anda verilebilir:
+
+```bash
+python3 scripts/import_customer_checks.py /path/to/ekstre1.xlsx /path/to/ekstre2.xlsx /path/to/ekstre3.xlsx
+```
+
+Bir klasör verilirse içindeki `.xlsx`, `.xls`, `.xlsm`, `.csv`, `.txt`, `.pdf`, `.png`, `.jpg` ve `.jpeg` dosyaları birlikte okunur:
+
+```bash
+python3 scripts/import_customer_checks.py /path/to/musteri_ekstreleri_klasoru
+```
+
+Çek havuzunu PostgreSQL'deki `checks`, `check_import_sessions` ve `check_import_rows` tablolarına yazmak için:
+
+```bash
+python3 scripts/import_customer_checks.py /path/to/musteri_ekstreleri_klasoru --store-check-pool
+```
+
+İşbaşı cari/fatura ödeme alanlarıyla karşılaştırmalı konsolide rapor için:
+
+```bash
+python3 scripts/export_check_pool_isbasi_comparison.py /path/to/musteri_ekstreleri_klasoru
+```
+
+Sadece yerel firma JSON'u ile eşleştirme yapmak ve İşbaşı fatura/ödeme alanlarını çekmemek için:
+
+```bash
+python3 scripts/export_check_pool_isbasi_comparison.py /path/to/musteri_ekstreleri_klasoru --firms-json /path/to/firms.json --skip-isbasi-activity
+```
 
 ### Tüm Verileri Excel'e Aktar
 
@@ -107,6 +187,21 @@ Gelen fatura kayıtlarını tedarikçiye göre filtreler ve cache'lenmiş fatura
 Her dosyada ilk sayfa `Fatura Detayları` sayfasıdır; fatura bilgileriyle birlikte giden müşteri, giden müşteri fiyatı, irsaliye açıklaması, ürün adı, ürün kodu, miktar, birim, birim fiyat, KDV dahil birim fiyat, torba kg, torba alış fiyatı, satır tutarı ve KDV oranını gösterir. Makine sıva/perlitli sıva gibi 35 kg ürünlerde `=(Birim Fiyat*35)/1000`, saten alçı gibi 25 kg ürünlerde `=(Birim Fiyat*25)/1000` formülü otomatik yazılır. `Fatura Özeti` sayfası fatura bazında ürün satır toplamı ile KDV matrahını karşılaştırır. FULLBOARD dosyasında ayrıca `Pivot Özet` sayfası oluşturulur; giden müşteri, ürün, açıklama ve irsaliye açıklamasına göre toplam KDV dahil birim fiyat ve toplam birim fiyatı gösterir.
 
 Not: Ürün/adet/birim fiyat kolonlarının dolması için `incoming_invoice_xml_cache` tablosunda fatura XML içerikleri bulunmalıdır. Cache boşsa önce API şifresiyle şu komut çalıştırılabilir:
+
+```bash
+python3 scripts/run_invoice_pipeline.py --start-date 2026-01-01 --refresh-xml
+```
+
+### Müşteri Ürün Fiyat Raporunu Oluştur
+
+```bash
+python3 scripts/export_customer_product_prices.py
+```
+
+Giden fatura XML cache'inden her müşteriye kesilen ürün satırlarını okur ve tek Excel dosyası oluşturur:
+- `kayıtlar/Musteri_Urun_Fiyatlari_YYYYMMDD_HHMMSS.xlsx`
+
+Excel içinde `Tüm Detaylar`, `Müşteri Özeti` ve her müşteri için ayrı sayfa bulunur. Ürün satırlarının dolması için önce giden XML cache'in dolması gerekir:
 
 ```bash
 python3 scripts/run_invoice_pipeline.py --start-date 2026-01-01 --refresh-xml
@@ -373,9 +468,10 @@ psql postgresql://sp383@localhost:5432/invoices -f sql/stateful_ingestion_schema
 psql postgresql://sp383@localhost:5432/invoices -f sql/migration_v2.2_despatch_improvements.sql
 psql postgresql://sp383@localhost:5432/invoices -f sql/migration_irsaliye_override.sql
 psql postgresql://sp383@localhost:5432/invoices -f sql/migration_incoming_xml_cache.sql
+psql postgresql://sp383@localhost:5432/invoices -f sql/migration_outgoing_xml_cache.sql
 ```
 
-Sırasıyla: veritabanını oluşturur, ana schema'yı uygular (4 tablo), v2.2 despatch iyileştirmelerini uygular, irsaliye override kolonunu ve gelen XML cache tablosunu ekler.
+Sırasıyla: veritabanını oluşturur, ana schema'yı uygular (4 tablo), v2.2 despatch iyileştirmelerini uygular, irsaliye override kolonunu, gelen XML cache tablosunu ve giden XML cache tablosunu ekler.
 
 ### Otomatik Veritabanı Kurulumu
 
@@ -441,6 +537,7 @@ tail -f /tmp/outgoing_agent.log
 | Ne Yapmak İstiyorsun? | Komut |
 |------------------------|-------|
 | Tek komutla çek, aktar, eşleştir, Excel üret | `python3 scripts/run_invoice_pipeline.py` |
+| Tek komutla çek + tüm Excel raporları (liste, fabrika, müşteri fiyat) | `python3 scripts/run_invoice_pipeline.py --all-excel` |
 | Gelen faturaları çek | `python3 backend/agents/incoming_agent.py` |
 | Giden faturaları çek | `python3 backend/agents/outgoing_agent.py` |
 | Excel'e aktar | `python3 scripts/export_to_excel.py --type all` |

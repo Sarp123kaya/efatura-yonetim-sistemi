@@ -4,7 +4,10 @@
 Tek komut fatura akışı:
 1. Gelen faturaları API'den çekip PostgreSQL'e yazar.
 2. Giden faturaları API'den çekip PostgreSQL'e yazar.
-3. PostgreSQL verisi üzerinden eşleştirme Excel raporu üretir.
+3. PostgreSQL verisi üzerinden eşleştirme (+ isteğe bağlı ters eşleştirme) Excel raporu üretir.
+4. Gelen e-irsaliyeleri API'den çekip giden faturalarla eşleştirme raporu üretir.
+5. --all-excel ile: Gelen/Giden listeleri, ters eşleştirme dahil yukarıdakilere ek olarak
+   fabrika (AK GIPS / FULLBOARD) ve müşteri ürün fiyat Excel'lerini de aynı çalıştırmada üretir.
 """
 
 import argparse
@@ -24,6 +27,26 @@ from backend.core.db import db
 from pg_invoice_matcher import generate_excel, get_matching_data
 from pg_reverse_matcher import generate_excel as generate_reverse_excel
 from pg_reverse_matcher import get_reverse_matching_data
+
+from backend.core.isbasi_client import IsbasiApiClient
+from export_customer_product_prices import export_customer_product_prices
+from export_supplier_invoice_details import export_supplier_reports
+from export_to_excel import (
+    export_agent_runs,
+    export_incoming_invoices,
+    export_outgoing_invoices,
+)
+from probe_incoming_despatches import (
+    ENDPOINT_CANDIDATES,
+    SWAGGER_BASE_URL,
+    default_start_date,
+    enrich_descriptions,
+    expand_pdf_paths,
+    parse_pdf_despatch_descriptions,
+    try_endpoint,
+    write_json_output,
+)
+from match_incoming_despatches_to_outgoing import generate_match_report, latest_source_json
 
 
 def parse_date(value: Optional[str]) -> Optional[datetime]:
@@ -64,6 +87,98 @@ def summarize_reverse_match(df) -> dict:
     }
 
 
+def run_all_excel_exports(output_dir: Path, created_files: list[Path]) -> None:
+    """DB'den Gelen/Giden/Agent listeleri, fabrika detayları ve müşteri fiyat raporunu üret."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    print("  • Gelen_Faturalar_*.xlsx")
+    path_in = output_dir / f"Gelen_Faturalar_{timestamp}.xlsx"
+    export_incoming_invoices(path_in)
+    created_files.append(path_in)
+    db.close_persistent_connection()
+
+    print("  • Giden_Faturalar_*.xlsx")
+    path_out = output_dir / f"Giden_Faturalar_{timestamp}.xlsx"
+    export_outgoing_invoices(path_out)
+    created_files.append(path_out)
+    db.close_persistent_connection()
+
+    print("  • Agent_Calismalari_*.xlsx")
+    path_runs = output_dir / f"Agent_Calismalari_{timestamp}.xlsx"
+    export_agent_runs(path_runs)
+    created_files.append(path_runs)
+    db.close_persistent_connection()
+
+    print("  • AK_GIPS_Fabrikasi_*.xlsx ve FULLBOARD_Fabrikasi_*.xlsx")
+    supplier_files = export_supplier_reports(output_dir)
+    created_files.extend(supplier_files)
+    db.close_persistent_connection()
+
+    print("  • Musteri_Urun_Fiyatlari_*.xlsx")
+    cust_file = export_customer_product_prices(output_dir)
+    created_files.append(cust_file)
+    db.close_persistent_connection()
+
+    if not any(path.name.startswith("Irsaliye_Giden_Fatura_Eslestirme_") for path in created_files):
+        print("  • Irsaliye_Giden_Fatura_Eslestirme_*.xlsx")
+        despatch_report = generate_match_report(latest_source_json(), output_dir, print_summary=True)
+        created_files.append(despatch_report)
+        db.close_persistent_connection()
+
+
+def run_incoming_despatch_step(args: argparse.Namespace, output_dir: Path, created_files: list[Path]) -> None:
+    """Fetch incoming e-despatches and create the incoming despatch -> outgoing invoice report."""
+
+    start_date = args.start_date.date().isoformat() if args.start_date else default_start_date()
+    end_date = args.end_date.date().isoformat() if args.end_date else datetime.now().date().isoformat()
+    pdf_paths = expand_pdf_paths(args.despatch_description_pdf)
+    pdf_descriptions = parse_pdf_despatch_descriptions(pdf_paths) if pdf_paths else None
+
+    client = IsbasiApiClient(base_url=args.despatch_base_url or SWAGGER_BASE_URL)
+    login_state = client.login()
+    diagnostics = []
+    auth_variants = [
+        ("raw-token", login_state.access_token),
+        ("bearer-token", f"Bearer {login_state.access_token}"),
+    ]
+
+    for auth_name, authorization in auth_variants:
+        client.session.headers.update({"Authorization": authorization})
+        for endpoint in ENDPOINT_CANDIDATES:
+            print(f"  Deniyorum: {endpoint} ({auth_name})")
+            rows, info = try_endpoint(
+                client,
+                endpoint,
+                start_date=start_date,
+                end_date=end_date,
+                page_size=args.despatch_page_size,
+                max_pages=args.despatch_max_pages,
+            )
+            info["auth"] = auth_name
+            diagnostics.append(info)
+            if not rows:
+                continue
+
+            print("  İrsaliye açıklamaları cache/API/PDF kaynaklarından tamamlanıyor...")
+            enrich_descriptions(
+                client,
+                rows,
+                limit=0,
+                refresh=args.refresh_despatch_descriptions,
+                pdf_descriptions=pdf_descriptions,
+            )
+
+            json_path = write_json_output(rows, endpoint, info["date_column"])
+            report_path = generate_match_report(json_path, output_dir, print_summary=True)
+            created_files.append(Path(report_path))
+            print(f"  Gelen e-irsaliye: {len(rows)} kayıt ({endpoint}, {auth_name})")
+            print(f"  Ham JSON: {json_path}")
+            print(f"  Rapor:    {report_path}")
+            return
+
+    raise RuntimeError(f"Gelen e-irsaliye endpoint'i bulunamadı. Deneme özeti: {diagnostics[-5:]}")
+
+
 def run_pipeline(args: argparse.Namespace) -> list[Path]:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -93,7 +208,10 @@ def run_pipeline(args: argparse.Namespace) -> list[Path]:
             db.close_persistent_connection()
 
             print_header("2/3 GIDEN FATURALAR CEKILIYOR")
-            outgoing_agent = OutgoingInvoiceAgent(run_id=f"{pipeline_id}_outgoing")
+            outgoing_agent = OutgoingInvoiceAgent(
+                run_id=f"{pipeline_id}_outgoing",
+                refresh_xml_cache=args.refresh_xml,
+            )
             outgoing_agent.run(start_date=args.start_date, end_date=args.end_date)
             db.close_persistent_connection()
         else:
@@ -127,6 +245,23 @@ def run_pipeline(args: argparse.Namespace) -> list[Path]:
             print(f"  Karşılıksız:   {reverse_summary['karsiliksiz']}")
             print(f"  İrsaliye yok:  {reverse_summary['irsaliye_yok']}")
             print(f"  Rapor:         {reverse_file}")
+
+        if not args.skip_despatches and not args.skip_ingest:
+            print()
+            print_header("GELEN E-IRSALIYELER CEKILIYOR")
+            run_incoming_despatch_step(args, output_dir, created_files)
+        elif args.skip_ingest and not args.skip_despatches:
+            print()
+            print("Gelen e-irsaliye API çekimi --skip-ingest nedeniyle atlandı.")
+
+        if args.all_excel:
+            print_header("4/4 TUM EXCEL CIKTILARI (LISTE + FABRIKA + MUSTERI FIYAT)")
+            print(
+                "Gelen/Giden listeleri, Agent çalışmaları, AK GIPS & FULLBOARD, "
+                "müşteri ürün fiyat raporu üretiliyor..."
+            )
+            print()
+            run_all_excel_exports(output_dir, created_files)
 
         print_header("AKIS TAMAMLANDI")
         for file_path in created_files:
@@ -167,9 +302,53 @@ def main() -> None:
         help="Varsayılan ters eşleştirme raporunu üretme.",
     )
     parser.add_argument(
+        "--skip-despatches",
+        action="store_true",
+        help="Gelen e-irsaliye listesini çekip giden faturalarla eşleştirme raporunu üretme.",
+    )
+    parser.add_argument(
+        "--despatch-description-pdf",
+        action="append",
+        default=["data/incoming_despatch_pdfs"],
+        help=(
+            "İrsaliye açıklama/plaka/sevk yeri için İşbaşı PDF export dosyası, klasörü veya glob'u. "
+            "Varsayılan: data/incoming_despatch_pdfs"
+        ),
+    )
+    parser.add_argument(
+        "--refresh-despatch-descriptions",
+        action="store_true",
+        help="Gelen e-irsaliye açıklama cache'ini yok sayıp kaynaklardan yeniden çek.",
+    )
+    parser.add_argument(
+        "--despatch-page-size",
+        type=int,
+        default=100,
+        help="Gelen e-irsaliye API sayfa boyutu.",
+    )
+    parser.add_argument(
+        "--despatch-max-pages",
+        type=int,
+        default=3,
+        help="Gelen e-irsaliye API maksimum sayfa sayısı.",
+    )
+    parser.add_argument(
+        "--despatch-base-url",
+        default=SWAGGER_BASE_URL,
+        help="Gelen e-irsaliye API base URL.",
+    )
+    parser.add_argument(
         "--refresh-xml",
         action="store_true",
-        help="Cache olsa bile gelen fatura XML içeriklerini yeniden çek.",
+        help="Cache olsa bile gelen ve giden fatura XML cache'ini yeniden çek.",
+    )
+    parser.add_argument(
+        "--all-excel",
+        action="store_true",
+        help=(
+            "Eşleştirme raporlarına ek olarak Gelen/Giden/Agent Excel'leri, "
+            "AK GIPS & FULLBOARD fabrika raporları ve müşteri ürün fiyat Excel'ini üret."
+        ),
     )
 
     args = parser.parse_args()

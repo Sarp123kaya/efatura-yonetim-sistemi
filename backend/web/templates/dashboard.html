@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - E-Fatura Web Panel{% endblock %}
+{% block content %}
+<section class="hero">
+    <div>
+        <h1>Operasyon Paneli</h1>
+        <p>Veri çekme, eşleştirme ve Excel rapor üretimini web üzerinden job olarak başlatın.</p>
+    </div>
+    <a class="button secondary" href="{{ url_for('reports') }}">Excel Raporları</a>
+</section>
+
+<section class="grid stats">
+    <article><strong>{{ stats.incoming_count }}</strong><span>Gelen Fatura</span></article>
+    <article><strong>{{ stats.outgoing_count }}</strong><span>Giden Fatura</span></article>
+    <article><strong>{{ stats.running_jobs }}</strong><span>Çalışan Job</span></article>
+    <article><strong>{{ stats.failed_jobs }}</strong><span>Hatalı Job</span></article>
+</section>
+
+{% if stats.last_error %}
+<div class="alert error">Son hata: {{ stats.last_error }}</div>
+{% endif %}
+
+<section class="panel">
+    <h2>Yeni Job Başlat</h2>
+    <form method="post" action="{{ url_for('start_job') }}" class="job-form">
+        <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token') }}">
+        <div class="form-grid">
+            <label>
+                İşlem
+                <select name="action" required>
+                    {% for action in actions.values() %}
+                        <option value="{{ action.key }}">{{ action.label }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                Başlangıç tarihi
+                <input type="date" name="start_date">
+            </label>
+            <label>
+                Bitiş tarihi
+                <input type="date" name="end_date">
+            </label>
+            <label>
+                Çıktı klasörü
+                <input type="text" name="output_dir" value="kayıtlar">
+            </label>
+            <label>
+                E-irsaliye PDF klasörü
+                <input type="text" name="despatch_description_pdf" value="data/incoming_despatch_pdfs">
+            </label>
+            <label>
+                İşbaşı şifresi
+                <input type="password" name="api_password" autocomplete="off" placeholder="Sadece API çeken işler için">
+            </label>
+        </div>
+        <p class="muted">
+            İşbaşı şifresi `.env` içinde yoksa burada girilebilir. Worker job'ı alır almaz şifreyi job kaydından temizler ve sadece o çalıştırma için kullanır.
+        </p>
+        <div class="checks">
+            <label><input type="checkbox" name="refresh_xml"> XML cache yenile</label>
+            <label><input type="checkbox" name="refresh_despatch_descriptions"> E-irsaliye açıklama cache yenile</label>
+            <label><input type="checkbox" name="skip_ingest"> API çekmeden mevcut DB ile çalış</label>
+            <label><input type="checkbox" name="all_excel"> Ek Excel paketlerini üret</label>
+            <label><input type="checkbox" name="skip_reverse"> Ters eşleştirmeyi atla</label>
+            <label><input type="checkbox" name="skip_despatches"> Gelen e-irsaliye raporunu atla</label>
+            <label><input type="checkbox" name="confirm"> Kalıcı/veri güncelleyen işlem için onay</label>
+        </div>
+        <button type="submit">Job Başlat</button>
+    </form>
+</section>
+
+<section class="two-col">
+    <div class="panel">
+        <h2>Son Joblar</h2>
+        {% include "_jobs_table.html" %}
+    </div>
+    <div class="panel">
+        <h2>Son Raporlar</h2>
+        {% include "_reports_table.html" %}
+    </div>
+</section>
+{% endblock %}
