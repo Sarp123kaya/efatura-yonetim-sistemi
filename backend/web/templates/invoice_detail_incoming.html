@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Gelen Fatura: {{ invoice.invoice_id }} — E-Fatura Panel{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>{{ invoice.invoice_id }}</h1>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+            <span class="badge yok" style="font-size:11px;">Gelen Fatura</span>
+            <span style="font-size:12px;color:var(--text-3);">{{ invoice.supplier or '' }}</span>
+        </div>
+    </div>
+    <a class="button secondary sm" href="{{ url_for('dashboard') }}">← Ana Sayfa</a>
+</div>
+
+<!-- ── Fatura Bilgileri ── -->
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header"><h3>📥 Fatura Bilgileri</h3></div>
+    <div class="card-body">
+        <dl class="meta">
+            <dt>Fatura No</dt>
+            <dd><strong>{{ invoice.invoice_id }}</strong></dd>
+
+            <dt>Tarih</dt>
+            <dd>{{ invoice.issue_date | format_dt if invoice.issue_date else '—' }}</dd>
+
+            <dt>Tedarikçi</dt>
+            <dd>{{ invoice.supplier or '—' }}</dd>
+
+            {% if invoice.supplier_tckn_vkn %}
+            <dt>VKN / TCKN</dt>
+            <dd><code>{{ invoice.supplier_tckn_vkn }}</code></dd>
+            {% endif %}
+
+            <dt>Tutar</dt>
+            <dd style="font-weight:600;font-size:15px;">
+                {{ invoice.amount | format_tl }}
+                {% if invoice.currency and invoice.currency != 'TRY' %}
+                <span style="font-size:12px;color:var(--text-3);margin-left:4px;">({{ invoice.currency }})</span>
+                {% endif %}
+            </dd>
+
+            {% if invoice.total_vat_base %}
+            <dt>KDV Matrahı</dt>
+            <dd>{{ invoice.total_vat_base | format_tl }}</dd>
+            {% endif %}
+
+            {% if invoice.despatch_ids %}
+            <dt>İrsaliye Numaraları</dt>
+            <dd>
+                {% for did in invoice.despatch_ids %}
+                <code style="font-size:12px;margin-right:6px;padding:2px 6px;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;">{{ did }}</code>
+                {% endfor %}
+            </dd>
+            {% endif %}
+        </dl>
+    </div>
+</div>
+
+<!-- ── Ürün Satırları ── -->
+{% if invoice.line_items %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header">
+        <h3>📦 Ürün / Hizmet Satırları</h3>
+        <span style="font-size:12px;color:var(--text-3);">{{ invoice.line_items | length }} kalem</span>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Ürün Kodu</th>
+                        <th>Ürün Adı / Açıklama</th>
+                        <th class="num">Miktar</th>
+                        <th class="num">Birim</th>
+                        <th class="num">Birim Fiyat</th>
+                        <th class="num">KDV %</th>
+                        <th class="num">KDV Dahil Fiyat</th>
+                        <th class="num">Satır Tutarı</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for item in invoice.line_items %}
+                <tr>
+                    <td class="muted-cell">{{ item['Satır No'] or loop.index }}</td>
+                    <td><code style="font-size:11px;">{{ item['Ürün Kodu'] or '—' }}</code></td>
+                    <td>
+                        <span style="font-weight:500;">{{ item['Ürün Adı'] or '—' }}</span>
+                        {% if item['Açıklama'] and item['Açıklama'] != item['Ürün Adı'] %}
+                        <br><span style="font-size:11px;color:var(--text-3);">{{ item['Açıklama'] }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="num">{{ item['Miktar'] or '—' }}</td>
+                    <td class="num" style="color:var(--text-3);font-size:12px;">{{ item['Birim'] or '—' }}</td>
+                    <td class="num">{{ item['Birim Fiyat'] | format_tl if item['Birim Fiyat'] else '—' }}</td>
+                    <td class="num" style="color:var(--text-3);">
+                        {% if item['KDV Oranı'] %}%{{ item['KDV Oranı'] | int }}{% else %}—{% endif %}
+                    </td>
+                    <td class="num" style="color:var(--text-2);">{{ item['KDV Dahil Birim Fiyat'] | format_tl if item['KDV Dahil Birim Fiyat'] else '—' }}</td>
+                    <td class="num" style="font-weight:600;">{{ item['Satır Tutarı'] | format_tl if item['Satır Tutarı'] else '—' }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+                <tfoot>
+                    {% if invoice.total_vat_base %}
+                    <tr style="background:var(--surface-2);font-weight:600;">
+                        <td colspan="8" style="text-align:right;padding-right:12px;color:var(--text-2);">Matrah Toplamı</td>
+                        <td class="num">{{ invoice.total_vat_base | format_tl }}</td>
+                    </tr>
+                    {% endif %}
+                    <tr style="background:var(--surface-2);">
+                        <td colspan="8" style="text-align:right;padding-right:12px;color:var(--text-2);">Genel Toplam (KDV Dahil)</td>
+                        <td class="num" style="font-weight:700;font-size:14px;color:var(--primary);">{{ invoice.amount | format_tl }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── İrsaliye Belgeleri ── -->
+{% if invoice.despatch_documents %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header">
+        <h3>🚚 İrsaliye Belgeleri</h3>
+        <span style="font-size:12px;color:var(--text-3);">{{ invoice.despatch_documents | length }} belge</span>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>İrsaliye ID (Kısa)</th>
+                        <th>İrsaliye ID (Tam)</th>
+                        <th>Açıklama</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for doc in invoice.despatch_documents %}
+                {% if doc is mapping %}
+                <tr>
+                    <td class="muted-cell">{{ loop.index }}</td>
+                    <td>
+                        {% set short = doc.get('despatch_id_short') %}
+                        {% if short %}
+                        <code style="font-size:12px;">{{ short }}</code>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td style="font-size:12px;color:var(--text-2);">{{ doc.get('despatch_id_full') or '—' }}</td>
+                    <td style="font-size:12px;max-width:340px;white-space:pre-wrap;color:var(--text-2);">{{ doc.get('description') or '—' }}</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Meta Bilgi ── -->
+<div class="card">
+    <div class="card-header"><h3>ℹ️ Kayıt Bilgisi</h3></div>
+    <div class="card-body">
+        <dl class="meta">
+            <dt>Oluşturma</dt>
+            <dd>{{ invoice.created_at | format_dt }}</dd>
+            <dt>Son Güncelleme</dt>
+            <dd>{{ invoice.updated_at | format_dt }}</dd>
+            {% if invoice.xml_fetched_at %}
+            <dt>XML Çekilme</dt>
+            <dd>{{ invoice.xml_fetched_at | format_dt }}</dd>
+            {% endif %}
+            {% if invoice.change_type %}
+            <dt>Değişim Tipi</dt>
+            <dd><code>{{ invoice.change_type }}</code></dd>
+            {% endif %}
+            {% if invoice.uuid %}
+            <dt>UUID</dt>
+            <dd style="font-size:11px;color:var(--text-3);">{{ invoice.uuid }}</dd>
+            {% endif %}
+        </dl>
+    </div>
+</div>
+
+{% endblock %}

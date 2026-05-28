@@ -13,7 +13,7 @@ import json
 import re
 import sys
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -34,6 +34,7 @@ from scripts.match_incoming_despatches_to_outgoing import generate_match_report
 
 
 SWAGGER_BASE_URL = "https://isbasimw.isbasi.com"
+DESPATCH_DEFAULT_START_DATE = "2026-01-01"
 
 ENDPOINT_CANDIDATES = [
     "/api/v1.0/dispatch/mydispatchlist",
@@ -101,7 +102,7 @@ FIELD_ALIASES = {
 
 
 def default_start_date() -> str:
-    return (date.today() - timedelta(days=60)).isoformat()
+    return DESPATCH_DEFAULT_START_DATE
 
 
 def parse_date_arg(value: str) -> datetime:

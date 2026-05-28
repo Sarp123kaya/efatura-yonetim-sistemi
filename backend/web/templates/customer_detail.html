@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% block title %}{{ firm.name }} — E-Fatura Panel{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>{{ firm.name }}</h1>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+            {% if firm.tax_id %}
+            <code style="font-size:12px;color:var(--text-3);">{{ firm.tax_id }}</code>
+            {% endif %}
+            {% if firm.city %}
+            <span style="font-size:12px;color:var(--text-3);">📍 {{ firm.city }}{% if firm.district %} / {{ firm.district }}{% endif %}</span>
+            {% endif %}
+            {% if not firm.is_active %}
+            <span class="badge bulunamadi" style="font-size:11px;">Pasif</span>
+            {% endif %}
+        </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <a class="button secondary sm" href="{{ url_for('customer_profit', firm_id=firm.firm_id) }}" style="white-space:nowrap;">📈 Kar Analizi</a>
+        <a class="button secondary sm" href="{{ url_for('customer_price_analysis', firm_id=firm.firm_id) }}" style="white-space:nowrap;">📊 Fiyat Analizi</a>
+        <a class="button secondary sm" href="{{ url_for('customers') }}">← Müşteriler</a>
+    </div>
+</div>
+
+<!-- ── Özet kartlar ── -->
+<div class="stats-grid" style="margin-bottom:20px;">
+    <div class="metric-card {{ 'accent-green' if firm.balance and firm.balance > 0 else ('accent-red' if firm.balance and firm.balance < 0 else '') }}">
+        <div class="metric-top">
+            <div class="metric-icon {{ 'green' if firm.balance and firm.balance > 0 else ('red' if firm.balance and firm.balance < 0 else 'blue') }}">
+                {{ '↑' if firm.balance and firm.balance > 0 else ('↓' if firm.balance and firm.balance < 0 else '≡') }}
+            </div>
+        </div>
+        <div class="metric-value" style="font-size:18px;">
+            {% if firm.balance is not none %}{{ firm.balance | format_tl }}{% else %}—{% endif %}
+        </div>
+        <div class="metric-label">Güncel Bakiye</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-top"><div class="metric-icon blue">📅</div></div>
+        <div class="metric-value" style="font-size:14px;">
+            {% if firm.beginning_balance is not none %}{{ firm.beginning_balance | format_tl }}{% else %}—{% endif %}
+        </div>
+        <div class="metric-label">
+            Dönem Başı Bakiye
+            {% if firm.beginning_balance_date %}
+            <br><span style="font-size:11px;">({{ firm.beginning_balance_date | format_dt }})</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="metric-card accent-blue">
+        <div class="metric-top"><div class="metric-icon blue">📄</div></div>
+        <div class="metric-value">{{ invoices | length }}</div>
+        <div class="metric-label">2026 Fatura Adedi</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-top"><div class="metric-icon blue">💰</div></div>
+        <div class="metric-value" style="font-size:16px;">
+            {{ invoices | sum(attribute='total_tl') | format_tl }}
+        </div>
+        <div class="metric-label">2026 Ciro Toplamı</div>
+    </div>
+</div>
+
+<!-- ── Bakiye bilgi notu ── -->
+{% if firm.balance_updated_at %}
+<div class="alert" style="background:var(--info-soft);border-color:var(--primary);color:var(--text-2);margin-bottom:16px;font-size:13px;">
+    ℹ️ Bakiye verisi <strong>{{ firm.balance_updated_at | format_dt }}</strong> tarihinde API'den alınmıştır.
+    Güncel bakiye için yeni bir veri çekme işi başlatın.
+</div>
+{% else %}
+<div class="alert warning" style="margin-bottom:16px;font-size:13px;">
+    ⚠️ Bakiye verisi henüz çekilmedi. Fatura detay sayfasındaki gömülü veriden oluşturuldu.
+</div>
+{% endif %}
+
+<!-- ── Aylık özet ── -->
+{% if monthly_summary %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header">
+        <h3>📊 Aylık Ciro Özeti</h3>
+        <span style="font-size:12px;color:var(--text-3);">Son 24 ay</span>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ay</th>
+                        <th class="num">Fatura Adedi</th>
+                        <th class="num">Toplam Tutar</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for m in monthly_summary %}
+                <tr>
+                    <td style="font-weight:500;">{{ m.ay }}</td>
+                    <td class="num">{{ m.adet }}</td>
+                    <td class="num" style="font-weight:600;">{{ m.toplam | format_tl }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Firma Bilgileri ── -->
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header"><h3>🏢 Firma Bilgileri</h3></div>
+    <div class="card-body">
+        <dl class="meta">
+            {% set r = firm.raw_json %}
+            <dt>Vergi No</dt>
+            <dd><code>{{ firm.tax_id or '—' }}</code></dd>
+
+            {% if r and r.get('taxOffice') %}
+            <dt>Vergi Dairesi</dt>
+            <dd>{{ r.taxOffice }}</dd>
+            {% endif %}
+
+            {% if firm.address %}
+            <dt>Adres</dt>
+            <dd>{{ firm.address }}</dd>
+            {% endif %}
+
+            {% if firm.city %}
+            <dt>Şehir / İlçe</dt>
+            <dd>{{ firm.city }}{% if firm.district %} / {{ firm.district }}{% endif %}</dd>
+            {% endif %}
+
+            {% if firm.phone %}
+            <dt>Telefon</dt>
+            <dd>{{ firm.phone }}</dd>
+            {% endif %}
+
+            {% if firm.email %}
+            <dt>E-posta</dt>
+            <dd>{{ firm.email }}</dd>
+            {% endif %}
+
+            {% if r and r.get('mersisNo') %}
+            <dt>MERSİS No</dt>
+            <dd><code>{{ r.mersisNo }}</code></dd>
+            {% endif %}
+
+            <dt>Durum</dt>
+            <dd>{{ 'Aktif' if firm.is_active else 'Pasif' }}</dd>
+
+            <dt>Firma ID</dt>
+            <dd style="color:var(--text-3);font-size:12px;">{{ firm.firm_id }}</dd>
+        </dl>
+    </div>
+</div>
+
+<!-- ── Çekler ── -->
+{% if checks %}
+{% set cek_toplam = checks | sum(attribute='amount') %}
+{% set en_yakin_vade = checks | map(attribute='maturity_date') | select | sort | first %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header">
+        <h3>💳 Çekler</h3>
+        <span style="font-size:12px;color:var(--text-3);">Onaylı çekler</span>
+    </div>
+    <div class="card-body">
+        <div class="stats-grid" style="margin-bottom:16px;">
+            <div class="metric-card accent-blue">
+                <div class="metric-top"><div class="metric-icon blue">💳</div></div>
+                <div class="metric-value">{{ checks | length }}</div>
+                <div class="metric-label">Çek Adedi</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-top"><div class="metric-icon blue">💰</div></div>
+                <div class="metric-value" style="font-size:16px;">{{ cek_toplam | format_tl }}</div>
+                <div class="metric-label">Toplam Çek Tutarı</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-top"><div class="metric-icon blue">📅</div></div>
+                <div class="metric-value" style="font-size:14px;">
+                    {% if en_yakin_vade %}{{ en_yakin_vade | format_dt }}{% else %}—{% endif %}
+                </div>
+                <div class="metric-label">En Yakın Vade</div>
+            </div>
+        </div>
+        <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Çek No</th>
+                        <th>Banka</th>
+                        <th class="num">Tutar</th>
+                        <th class="num">Vade Tarihi</th>
+                        <th class="num">İşlem Tarihi</th>
+                        <th>Durum</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for ck in checks %}
+                <tr>
+                    <td style="font-weight:500;"><code style="font-size:11px;">{{ ck.check_no or '—' }}</code></td>
+                    <td class="muted-cell">{{ ck.bank_name or '—' }}</td>
+                    <td class="num" style="font-weight:600;">{{ ck.amount | format_tl }}</td>
+                    <td class="num muted-cell" style="white-space:nowrap;">
+                        {{ ck.maturity_date | format_dt if ck.maturity_date else '—' }}
+                    </td>
+                    <td class="num muted-cell" style="white-space:nowrap;">
+                        {{ ck.transaction_date | format_dt if ck.transaction_date else '—' }}
+                    </td>
+                    <td>
+                        {% if ck.status == 'PORTFOLIO' %}
+                            <span class="badge" style="background:#dbeafe;color:#1d4ed8;border-color:#93c5fd;">PORTFÖYDE</span>
+                        {% elif ck.status == 'CLEARED' %}
+                            <span class="badge" style="background:#dcfce7;color:#15803d;border-color:#86efac;">TAHSİL EDİLDİ</span>
+                        {% elif ck.status == 'BOUNCED' %}
+                            <span class="badge" style="background:#fee2e2;color:#b91c1c;border-color:#fca5a5;">KARŞILIKSIZ</span>
+                        {% else %}
+                            <span class="badge muted-cell">{{ ck.status or '—' }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Fatura Geçmişi ── -->
+{% if invoices %}
+<div class="card">
+    <div class="card-header">
+        <h3>📄 Fatura Geçmişi</h3>
+        <span style="font-size:12px;color:var(--text-3);">Son {{ invoices | length }} fatura</span>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-wrap" style="max-height:480px;overflow-y:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tarih</th>
+                        <th>Fatura No</th>
+                        <th class="num">Tutar</th>
+                        <th class="num">Matrah</th>
+                        <th>İrsaliye</th>
+                        <th>Açıklama</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for inv in invoices %}
+                <tr>
+                    <td class="muted-cell" style="white-space:nowrap;">{{ inv.issue_date | format_dt }}</td>
+                    <td style="font-weight:500;">
+                        <a href="{{ url_for('invoice_outgoing_detail', invoice_id=inv.id) }}"
+                           style="color:var(--primary);text-decoration:none;"
+                           onmouseover="this.style.textDecoration='underline'"
+                           onmouseout="this.style.textDecoration='none'">
+                            {{ inv.invoice_no }}
+                        </a>
+                    </td>
+                    <td class="num" style="font-weight:600;">{{ inv.total_tl | format_tl }}</td>
+                    <td class="num muted-cell">{{ inv.taxable_amount | format_tl if inv.taxable_amount else '—' }}</td>
+                    <td>
+                        {% for code in inv.irsaliye_codes %}
+                        <code style="font-size:11px;margin-right:4px;">{{ code }}</code>
+                        {% else %}
+                        <span style="color:var(--text-3);">—</span>
+                        {% endfor %}
+                    </td>
+                    <td class="muted-cell" style="font-size:12px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                        title="{{ inv.description or '' }}">
+                        {{ inv.description or '—' }}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

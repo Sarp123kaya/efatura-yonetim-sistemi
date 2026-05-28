@@ -1,20 +1,27 @@
 {% if reports %}
+<div class="table-wrap">
 <table>
     <thead>
         <tr>
             <th>Dosya</th>
+            <th>Tarih</th>
             <th>Boyut</th>
         </tr>
     </thead>
     <tbody>
     {% for report in reports %}
         <tr>
-            <td><a href="{{ url_for('download', relative_path=report.relative_path) }}">{{ report.name }}</a></td>
-            <td>{{ report.size_kb }} KB</td>
+            <td><a href="{{ url_for('download', relative_path=report.relative_path) }}" style="font-weight:500;">⬇️ {{ report.name }}</a></td>
+            <td class="muted-cell" style="white-space:nowrap;">{{ report.mtime | format_dt }}</td>
+            <td class="muted-cell">{{ report.size_kb }} KB</td>
         </tr>
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="muted">Henüz Excel raporu yok.</p>
+<div style="text-align:center;padding:40px 16px;color:var(--text-3);">
+    <div style="font-size:32px;margin-bottom:10px;">📂</div>
+    <p style="color:var(--text-3);">Henüz Excel raporu yok.</p>
+</div>
 {% endif %}

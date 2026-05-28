@@ -1,9 +1,17 @@
 {% extends "base.html" %}
-{% block title %}Raporlar - E-Fatura Web Panel{% endblock %}
+{% block title %}Raporlar — E-Fatura Panel{% endblock %}
 {% block content %}
-<section class="panel">
-    <h1>Excel Raporları</h1>
-    <p class="muted">`kayıtlar/` klasöründeki Excel çıktıları listelenir.</p>
-    {% include "_reports_table.html" %}
-</section>
+<div class="page-header">
+    <div>
+        <h1>Excel Raporları</h1>
+        <p><code>kayıtlar/</code> klasöründeki dosyalar listelenir.</p>
+    </div>
+    <a class="button secondary sm" href="{{ url_for('dashboard') }}">← Ana Sayfa</a>
+</div>
+
+<div class="card">
+    <div class="card-body no-pad">
+        {% include "_reports_table.html" %}
+    </div>
+</div>
 {% endblock %}

@@ -127,15 +127,139 @@ def build_incoming_index(incoming_rows):
     return index
 
 
+_DESPATCH_SUPPLIER_PREFIX = {
+    'AK':    'A',
+    'FULL':  'F',
+    'TERMA': 'T',
+}
+
+
+def extract_destination_from_description(description: str) -> str:
+    """
+    Parses shipping destination from AK GİPS (and similar) despatch descriptions.
+
+    Input example:
+        "68 KR 620 PLAKALI ARAÇ VE AKİF ÇELİK İLE ADIYAMAN ADRESİNE SEVK EDİLMİŞTİR"
+    Returns: "ADIYAMAN"
+
+    Other examples:
+        "... İLE GÖLBAŞI ADRESİNE ..."           → "GÖLBAŞI"
+        "... İLE ALTINOVA-İSLAHİYE ADRESİNE ..."  → "ALTINOVA-İSLAHİYE"
+        "... İLE KOCAELİ ADRESİNE ..."            → "KOCAELİ"
+    """
+    text = str(description or '').strip()
+    match = re.search(r'\bİLE\s+(.+?)\s+ADRESİNE\b', text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return ''
+
+
+def extract_destination_from_invoice_description(description: str) -> str:
+    """
+    Parses shipping destination from outgoing invoice description parenthetical.
+
+    Input examples:
+        "İrsaliye no: A-5936 (Başakşehir)"       → "Başakşehir"
+        "İrsaliye no: F-2537 (Mersin)"            → "Mersin"
+        "İrsaliye no: A-5886 (Altınova/İslahiye)" → "Altınova/İslahiye"
+        "İRSALİYE NO : A-4567 / A-4543"           → ""  (parantez yok)
+    """
+    text = str(description or '').strip()
+    match = re.search(r'\(([^)]+)\)', text)
+    if match:
+        return match.group(1).strip()
+    return ''
+
+
+def build_despatch_description_index() -> dict:
+    """
+    Build lookup: normalized_irsaliye_code -> shipping destination string.
+
+    Source: incoming_despatch_description_cache
+    Steps per row:
+        1. Determine prefix letter from supplier name (AK→A, FULL→F, TERMA→T)
+        2. Extract last-5 digits of dispatch_id (e.g. IRS2026000005887 → 05887)
+        3. Form normalized code: "A-05887"
+        4. Parse destination via extract_destination_from_description()
+    """
+    rows = db.query("""
+        SELECT dispatch_id, supplier, description
+        FROM incoming_despatch_description_cache
+        WHERE description IS NOT NULL AND description != ''
+    """)
+
+    index = {}
+    for row in rows:
+        dispatch_id = row.get('dispatch_id') or ''
+        supplier    = (row.get('supplier') or '').upper()
+        description = row.get('description') or ''
+
+        if not dispatch_id or not description:
+            continue
+
+        prefix = next(
+            (p for key, p in _DESPATCH_SUPPLIER_PREFIX.items() if key in supplier),
+            None,
+        )
+        if not prefix:
+            continue
+
+        digits = re.sub(r'\D', '', dispatch_id)
+        if not digits:
+            continue
+        number = digits[-5:].zfill(5)
+        normalized = f"{prefix}-{number}"
+
+        destination = extract_destination_from_description(description)
+        if destination:
+            index[normalized] = destination
+
+    return index
+
+
+def build_invoice_description_destination_index() -> dict:
+    """
+    Build fallback lookup: outgoing_invoice_id -> shipping destination.
+
+    Source: outgoing_invoices.description field.
+    Covers single-code invoices that have parenthetical destination like:
+        "İrsaliye no: A-5936 (Başakşehir)"  →  id → "Başakşehir"
+
+    For multi-code invoices without parenthesis (e.g. "İRSALİYE NO: A-4567 / A-4543"),
+    no destination can be extracted; those entries are omitted.
+    """
+    rows = db.query("""
+        SELECT id, description
+        FROM outgoing_invoices
+        WHERE description IS NOT NULL AND description != ''
+          AND description ~ '\\([^)]+\\)'
+    """)
+
+    index = {}
+    for row in rows:
+        invoice_id  = row.get('id') or ''
+        description = row.get('description') or ''
+        destination = extract_destination_from_invoice_description(description)
+        if invoice_id and destination:
+            index[invoice_id] = destination
+
+    return index
+
+
 def get_matching_data():
     ensure_xml_cache_schema()
 
+    # Katman 1: irsaliye açıklama cache'inden normalize kod → şehir
+    despatch_destination_index = build_despatch_description_index()
+    # Katman 2: giden fatura description parantezinden invoice_id → şehir (fallback)
+    invoice_description_destination_index = build_invoice_description_destination_index()
+
     outgoing_rows = db.query("""
-        SELECT id, invoice_no, issue_date, firm_name,
-               total_tl, taxable_amount, description,
-               COALESCE(irsaliye_codes_override, irsaliye_codes) AS irsaliye_codes
-        FROM outgoing_invoices
-        ORDER BY issue_date DESC
+        SELECT o.id, o.invoice_no, o.issue_date, o.firm_name,
+               o.total_tl, o.taxable_amount, o.description,
+               COALESCE(o.irsaliye_codes_override, o.irsaliye_codes) AS irsaliye_codes
+        FROM outgoing_invoices o
+        ORDER BY o.issue_date DESC
     """)
 
     incoming_rows = db.query("""
@@ -177,6 +301,7 @@ def get_matching_data():
                 'Gelen Tutar (TL)': 0,
                 'Fark (TL)': 0,
                 'İrsaliye Açıklaması': '',
+                'Gittiği Yer': '',
                 'Durum': 'İrsaliye kodu yok'
             })
             continue
@@ -194,6 +319,14 @@ def get_matching_data():
                 in_row = incoming_index.get((sup_key, number))
             else:
                 in_row = None
+
+            # Katman 1: irsaliye açıklama cache (AK GİPS "İLE X ADRESİNE SEVK" kalıbı)
+            # Katman 2: giden fatura description parantezi "İrsaliye no: X-123 (Şehir)"
+            gittigi_yer = (
+                despatch_destination_index.get(code)
+                or invoice_description_destination_index.get(str(out_row.get('id', '')))
+                or ''
+            )
 
             if in_row:
                 in_despatch_count = len(in_row.get('despatch_ids', []))
@@ -226,6 +359,7 @@ def get_matching_data():
                 'Gelen Tutar (TL)': round(gelen_tutar, 2),
                 'Fark (TL)': round(fark, 2),
                 'İrsaliye Açıklaması': irsaliye_aciklamasi,
+                'Gittiği Yer': gittigi_yer,
                 'Durum': durum
             })
 

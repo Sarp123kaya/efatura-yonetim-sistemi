@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block title %}{{ firm.name }} — Kar Analizi — E-Fatura Panel{% endblock %}
+
+{% block head %}
+<style>
+.kar-pos { color: var(--success, #16a34a); font-weight: 700; }
+.kar-neg { color: var(--danger, #dc2626); font-weight: 700; }
+.row-neg  { background: #fff5f5 !important; }
+.sticky-thead thead th { position: sticky; top: 0; background: var(--bg-2); z-index: 1; }
+.fabrika-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .5px;
+}
+.fab-AK    { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
+.fab-FULL  { background: #f3e8ff; color: #7c3aed; border: 1px solid #c4b5fd; }
+.fab-TERMA { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>📈 Kar Analizi — {{ firm.name }}</h1>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+            {% if firm.tax_id %}
+            <code style="font-size:12px;color:var(--text-3);">{{ firm.tax_id }}</code>
+            {% endif %}
+            {% if firm.city %}
+            <span style="font-size:12px;color:var(--text-3);">📍 {{ firm.city }}{% if firm.district %} / {{ firm.district }}{% endif %}</span>
+            {% endif %}
+        </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <a class="button secondary sm" href="{{ url_for('customer_detail', firm_id=firm.firm_id) }}">← Müşteri Detayı</a>
+        <a class="button secondary sm" href="{{ url_for('customer_price_analysis', firm_id=firm.firm_id) }}">📊 Fiyat Analizi</a>
+    </div>
+</div>
+
+{% if not rows %}
+<div class="alert warning" style="margin-bottom:16px;">
+    ⚠️ Bu müşteri için kar verisi bulunamadı. (factory_a_kar, factory_f_kar, factory_t_kar tablolarında kayıt yok.)
+</div>
+{% else %}
+
+<!-- ── Özet metrik kartlar ── -->
+<div class="stats-grid" style="margin-bottom:20px;">
+    <div class="metric-card {{ 'accent-green' if toplam_kar >= 0 else 'accent-red' }}">
+        <div class="metric-top">
+            <div class="metric-icon {{ 'green' if toplam_kar >= 0 else 'red' }}">
+                {{ '↑' if toplam_kar >= 0 else '↓' }}
+            </div>
+        </div>
+        <div class="metric-value {{ 'kar-pos' if toplam_kar >= 0 else 'kar-neg' }}" style="font-size:18px;">
+            {{ toplam_kar | format_tl }}
+        </div>
+        <div class="metric-label">Toplam Kar</div>
+    </div>
+
+    <div class="metric-card accent-blue">
+        <div class="metric-top"><div class="metric-icon blue">💰</div></div>
+        <div class="metric-value" style="font-size:18px;">{{ toplam_satis | format_tl }}</div>
+        <div class="metric-label">Toplam Satış</div>
+    </div>
+
+    <div class="metric-card">
+        <div class="metric-top"><div class="metric-icon blue">🏭</div></div>
+        <div class="metric-value" style="font-size:18px;">{{ toplam_maliyet | format_tl }}</div>
+        <div class="metric-label">Toplam Maliyet</div>
+    </div>
+
+    <div class="metric-card {{ 'accent-green' if kar_marji >= 0 else 'accent-red' }}">
+        <div class="metric-top">
+            <div class="metric-icon {{ 'green' if kar_marji >= 10 else ('red' if kar_marji < 0 else 'blue') }}">%</div>
+        </div>
+        <div class="metric-value {{ 'kar-pos' if kar_marji >= 0 else 'kar-neg' }}" style="font-size:22px;">
+            {{ "%.1f"|format(kar_marji) }}%
+        </div>
+        <div class="metric-label">Kar Marjı</div>
+    </div>
+</div>
+
+<!-- ── Fabrika bazlı özet ── -->
+{% if fabrika_ozet %}
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-header">
+        <h3>🏭 Fabrika Bazlı Özet</h3>
+        <span style="font-size:12px;color:var(--text-3);">{{ rows | length }} irsaliye</span>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Fabrika</th>
+                        <th class="num">İrsaliye Adedi</th>
+                        <th class="num">Toplam Satış</th>
+                        <th class="num">Toplam Maliyet</th>
+                        <th class="num">Toplam Kar</th>
+                        <th class="num">Marj %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for fab, d in fabrika_ozet.items() %}
+                <tr>
+                    <td>
+                        <span class="fabrika-badge fab-{{ fab }}">{{ fab }}</span>
+                    </td>
+                    <td class="num">{{ d.adet }}</td>
+                    <td class="num">{{ d.satis | format_tl }}</td>
+                    <td class="num muted-cell">{{ d.maliyet | format_tl }}</td>
+                    <td class="num {{ 'kar-pos' if d.kar >= 0 else 'kar-neg' }}" style="font-weight:600;">
+                        {{ d.kar | format_tl }}
+                    </td>
+                    <td class="num {{ 'kar-pos' if d.marj >= 0 else 'kar-neg' }}">
+                        {{ "%.1f"|format(d.marj) }}%
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr style="font-weight:700;border-top:2px solid var(--border);">
+                        <td>Toplam</td>
+                        <td class="num">{{ rows | length }}</td>
+                        <td class="num">{{ toplam_satis | format_tl }}</td>
+                        <td class="num muted-cell">{{ toplam_maliyet | format_tl }}</td>
+                        <td class="num {{ 'kar-pos' if toplam_kar >= 0 else 'kar-neg' }}">{{ toplam_kar | format_tl }}</td>
+                        <td class="num {{ 'kar-pos' if kar_marji >= 0 else 'kar-neg' }}">{{ "%.1f"|format(kar_marji) }}%</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Aylık kar özeti ── -->
+{% if aylik_ozet %}
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-header">
+        <h3>📅 Aylık Kar Özeti</h3>
+        <span style="font-size:12px;color:var(--text-3);">Son 24 ay</span>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ay</th>
+                        <th class="num">İrsaliye Adedi</th>
+                        <th class="num">Satış</th>
+                        <th class="num">Maliyet</th>
+                        <th class="num">Kar</th>
+                        <th class="num">Marj %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for ay, d in aylik_ozet.items() %}
+                <tr>
+                    <td style="font-weight:500;">{{ ay }}</td>
+                    <td class="num">{{ d.adet }}</td>
+                    <td class="num">{{ d.satis | format_tl }}</td>
+                    <td class="num muted-cell">{{ d.maliyet | format_tl }}</td>
+                    <td class="num {{ 'kar-pos' if d.kar >= 0 else 'kar-neg' }}" style="font-weight:600;">
+                        {{ d.kar | format_tl }}
+                    </td>
+                    <td class="num {{ 'kar-pos' if d.marj >= 0 else 'kar-neg' }}">
+                        {{ "%.1f"|format(d.marj) }}%
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── İrsaliye bazlı detay ── -->
+<div class="card">
+    <div class="card-header">
+        <h3>📋 İrsaliye Detayları</h3>
+        <span style="font-size:12px;color:var(--text-3);">{{ rows | length }} kayıt</span>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-wrap sticky-thead" style="max-height:600px;overflow-y:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tarih</th>
+                        <th>Fatura No</th>
+                        <th>İrsaliye Kodu</th>
+                        <th>Fabrika</th>
+                        <th class="num">Satış Tutarı</th>
+                        <th class="num">Maliyet</th>
+                        <th class="num">Kar (TL)</th>
+                        <th class="num">Kar %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for r in rows %}
+                <tr {% if r.negatif %}class="row-neg"{% endif %}>
+                    <td class="muted-cell" style="white-space:nowrap;">{{ r.tarih }}</td>
+                    <td style="font-weight:500;">
+                        {% if r.outgoing_invoice_id %}
+                        <a href="{{ url_for('invoice_outgoing_detail', invoice_id=r.outgoing_invoice_id) }}"
+                           style="color:var(--primary);text-decoration:none;"
+                           onmouseover="this.style.textDecoration='underline'"
+                           onmouseout="this.style.textDecoration='none'">
+                            {{ r.giden_fatura_no }}
+                        </a>
+                        {% else %}
+                        {{ r.giden_fatura_no or '—' }}
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if r.irsaliye_kodu %}
+                        <code style="font-size:11px;">{{ r.irsaliye_kodu }}</code>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        <span class="fabrika-badge fab-{{ r.fabrika }}">{{ r.fabrika }}</span>
+                    </td>
+                    <td class="num">{{ r.giden_tutar | format_tl }}</td>
+                    <td class="num muted-cell">{{ r.gelen_tutar | format_tl }}</td>
+                    <td class="num {{ 'kar-pos' if not r.negatif else 'kar-neg' }}" style="font-weight:600;">
+                        {{ r.fark_tl | format_tl }}
+                    </td>
+                    <td class="num {{ 'kar-pos' if r.kar_yuzde >= 0 else 'kar-neg' }}">
+                        {{ "%.1f"|format(r.kar_yuzde) }}%
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endif %}
+
+<div style="margin-top:8px;text-align:right;">
+    <a href="#" style="font-size:12px;color:var(--text-3);" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;">▲ Başa dön</a>
+</div>
+
+{% endblock %}

@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}{{ firm.name }} — Fiyat Analizi — E-Fatura Panel{% endblock %}
+
+{% block head %}
+<style>
+.trend-up   { color: var(--danger, #e53e3e); font-weight: 700; }
+.trend-down { color: var(--success, #38a169); font-weight: 700; }
+.trend-flat { color: var(--text-3); font-weight: 700; }
+.product-section { scroll-margin-top: 80px; }
+.sticky-thead thead th { position: sticky; top: 0; background: var(--bg-2); z-index: 1; }
+.price-diff-pos { color: var(--danger, #e53e3e); font-size: 11px; }
+.price-diff-neg { color: var(--success, #38a169); font-size: 11px; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>{{ firm.name }}</h1>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+            {% if firm.tax_id %}
+            <code style="font-size:12px;color:var(--text-3);">{{ firm.tax_id }}</code>
+            {% endif %}
+            {% if firm.city %}
+            <span style="font-size:12px;color:var(--text-3);">📍 {{ firm.city }}{% if firm.district %} / {{ firm.district }}{% endif %}</span>
+            {% endif %}
+        </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <a class="button secondary sm" href="{{ url_for('customer_detail', firm_id=firm.firm_id) }}">← Müşteri Detayı</a>
+        <a class="button secondary sm" href="{{ url_for('customers') }}">← Müşteriler</a>
+    </div>
+</div>
+
+{% if not products %}
+<div class="alert warning" style="margin-bottom:16px;">
+    ⚠️ Bu müşteri için XML önbelleğinde ürün satırı verisi bulunamadı. Faturaları yenileyin.
+</div>
+{% else %}
+
+<!-- ── Özet tablo ── -->
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-header">
+        <h3>📋 Ürün Fiyat Özeti</h3>
+        <span style="font-size:12px;color:var(--text-3);">{{ products | length }} farklı ürün</span>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-wrap sticky-thead">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ürün</th>
+                        <th>Birim</th>
+                        <th class="num">Fatura<br>Adedi</th>
+                        <th class="num">Toplam<br>Miktar</th>
+                        <th class="num">Son Fiyat</th>
+                        <th class="num">Ort. Fiyat</th>
+                        <th class="num">Min</th>
+                        <th class="num">Max</th>
+                        <th style="text-align:center;">Trend</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for p in products %}
+                <tr>
+                    <td style="font-weight:500;">
+                        <a href="#product-{{ p.anchor }}"
+                           style="color:var(--primary);text-decoration:none;"
+                           onmouseover="this.style.textDecoration='underline'"
+                           onmouseout="this.style.textDecoration='none'">
+                            {{ p.urun_adi }}
+                        </a>
+                        {% if p.urun_kodu %}
+                        <br><code style="font-size:10px;color:var(--text-3);">{{ p.urun_kodu }}</code>
+                        {% endif %}
+                    </td>
+                    <td class="muted-cell">{{ p.birim or '—' }}</td>
+                    <td class="num">{{ p.fatura_adedi }}</td>
+                    <td class="num">
+                        {% if p.toplam_miktar is not none %}
+                            {{ "%.0f"|format(p.toplam_miktar) }}
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="num" style="font-weight:600;">
+                        {% if p.son_fiyat is not none %}
+                            {{ "%.2f"|format(p.son_fiyat) }} ₺
+                            {% if p.son_tarih %}
+                            <br><span style="font-size:10px;color:var(--text-3);">{{ p.son_tarih }}</span>
+                            {% endif %}
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="num">
+                        {% if p.avg_fiyat is not none %}{{ "%.2f"|format(p.avg_fiyat) }} ₺{% else %}—{% endif %}
+                    </td>
+                    <td class="num muted-cell">
+                        {% if p.min_fiyat is not none %}{{ "%.2f"|format(p.min_fiyat) }} ₺{% else %}—{% endif %}
+                    </td>
+                    <td class="num muted-cell">
+                        {% if p.max_fiyat is not none %}{{ "%.2f"|format(p.max_fiyat) }} ₺{% else %}—{% endif %}
+                    </td>
+                    <td style="text-align:center;font-size:18px;">
+                        {% if p.trend == '↑' %}
+                        <span class="trend-up" title="Fiyat artış eğiliminde">↑</span>
+                        {% elif p.trend == '↓' %}
+                        <span class="trend-down" title="Fiyat düşüş eğiliminde">↓</span>
+                        {% else %}
+                        <span class="trend-flat" title="Fiyat sabit">→</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ── Ürün bazında fiyat geçmişi ── -->
+{% set ns = namespace() %}
+{% for p in products %}
+{% set product_key = p.urun_kodu or p.urun_adi %}
+{% set p_rows = detail_rows | selectattr("urun_adi", "equalto", p.urun_adi) | list %}
+{% if p.urun_kodu %}
+{% set p_rows = detail_rows | selectattr("urun_kodu", "equalto", p.urun_kodu) | list %}
+{% endif %}
+
+<div id="product-{{ p.anchor }}" class="card product-section" style="margin-bottom:16px;">
+    <div class="card-header">
+        <div>
+            <h3 style="margin:0;">{{ p.urun_adi }}</h3>
+            {% if p.urun_kodu %}
+            <code style="font-size:11px;color:var(--text-3);">{{ p.urun_kodu }}</code>
+            {% endif %}
+        </div>
+        <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--text-2);">
+            <span>{{ p.fatura_adedi }} fatura</span>
+            {% if p.birim %}<span class="badge">{{ p.birim }}</span>{% endif %}
+            <span style="font-size:18px;">
+                {% if p.trend == '↑' %}<span class="trend-up">↑</span>
+                {% elif p.trend == '↓' %}<span class="trend-down">↓</span>
+                {% else %}<span class="trend-flat">→</span>{% endif %}
+            </span>
+        </div>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-wrap" style="max-height:360px;overflow-y:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tarih</th>
+                        <th>Fatura No</th>
+                        <th class="num">Miktar</th>
+                        <th class="num">Birim Fiyat</th>
+                        <th class="num">KDV %</th>
+                        <th class="num">KDV Dahil</th>
+                        <th class="num">Satır Tutarı</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% set prev_price = namespace(val=none) %}
+                {% for row in p_rows %}
+                <tr>
+                    <td class="muted-cell" style="white-space:nowrap;">{{ row.tarih }}</td>
+                    <td style="font-weight:500;">
+                        <a href="{{ url_for('invoice_outgoing_detail', invoice_id=row.invoice_id) }}"
+                           style="color:var(--primary);text-decoration:none;"
+                           onmouseover="this.style.textDecoration='underline'"
+                           onmouseout="this.style.textDecoration='none'">
+                            {{ row.invoice_no }}
+                        </a>
+                    </td>
+                    <td class="num">
+                        {% if row.miktar is not none %}{{ "%.0f"|format(row.miktar) }}{% else %}—{% endif %}
+                        <span class="muted-cell" style="font-size:11px;"> {{ row.birim }}</span>
+                    </td>
+                    <td class="num" style="font-weight:600;">
+                        {% if row.birim_fiyat is not none %}
+                            {{ "%.2f"|format(row.birim_fiyat) }} ₺
+                            {% if prev_price.val is not none and row.birim_fiyat != prev_price.val %}
+                                {% set diff = row.birim_fiyat - prev_price.val %}
+                                {% if diff > 0 %}
+                                <span class="price-diff-pos">(+{{ "%.2f"|format(diff) }})</span>
+                                {% else %}
+                                <span class="price-diff-neg">({{ "%.2f"|format(diff) }})</span>
+                                {% endif %}
+                            {% endif %}
+                            {% set prev_price.val = row.birim_fiyat %}
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="num muted-cell">
+                        {% if row.kdv_orani is not none %}%{{ "%.0f"|format(row.kdv_orani) }}{% else %}—{% endif %}
+                    </td>
+                    <td class="num muted-cell">
+                        {% if row.kdv_dahil_fiyat is not none %}{{ "%.2f"|format(row.kdv_dahil_fiyat) }} ₺{% else %}—{% endif %}
+                    </td>
+                    <td class="num">
+                        {% if row.satir_tutari is not none %}
+                            {{ "{:,.2f}".format(row.satir_tutari).replace(",","X").replace(".",",").replace("X",".") }} ₺
+                        {% else %}—{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+{% endif %}
+
+<div style="margin-top:8px;text-align:right;">
+    <a href="#" style="font-size:12px;color:var(--text-3);" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;">▲ Başa dön</a>
+</div>
+
+{% endblock %}

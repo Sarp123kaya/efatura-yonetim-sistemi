@@ -16,6 +16,13 @@ requests>=2.31.0
 # PostgreSQL (stateful ingestion için gerekli)
 # Backend agents için psycopg2-binary gerekli
 psycopg2-binary>=2.9.0
+# Çekler modülü için psycopg v3 (binary sürüm)
+psycopg[binary]>=3.1.0
+
+# Çekler — PDF ve OCR desteği
+pdfplumber>=0.10.0
+python-dateutil>=2.8.0
+pydantic>=2.0.0
 
 # Veri İşleme
 # Not: Parser'lar şu an standart kütüphane `xml.etree.ElementTree` kullanıyor; lxml opsiyoneldir.

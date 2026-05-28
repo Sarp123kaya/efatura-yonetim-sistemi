@@ -27,7 +27,7 @@ Web panel job kuyruğu için `sql/migration_web_jobs.sql` uygulanmalıdır. `./s
 python3 scripts/run_invoice_pipeline.py
 ```
 
-Sırasıyla gelen faturaları çeker, giden faturaları çeker, ikisini PostgreSQL'e aktarır, hem normal eşleştirme hem ters eşleştirme Excel raporlarını oluşturur. Ayrıca gelen e-irsaliyeleri İşbaşı API'den çekip giden faturalarla eşleştiren `kayıtlar/Irsaliye_Giden_Fatura_Eslestirme_YYYYMMDD_HHMMSS.xlsx` raporunu üretir. Varsayılan PDF açıklama klasörü: `data/incoming_despatch_pdfs`.
+Sırasıyla gelen faturaları çeker, giden faturaları çeker, ikisini PostgreSQL'e aktarır, hem normal eşleştirme hem ters eşleştirme Excel raporlarını oluşturur. Ayrıca gelen e-irsaliyeleri İşbaşı API'den 2026-01-01'den itibaren çekip giden faturalarla eşleştiren `kayıtlar/Irsaliye_Giden_Fatura_Eslestirme_YYYYMMDD_HHMMSS.xlsx` raporunu üretir. Varsayılan PDF açıklama klasörü: `data/incoming_despatch_pdfs`.
 
 **Tek komutta tüm Excel raporları** (eşleştirme + ters eşleştirme + `Gelen_Faturalar` + `Giden_Faturalar` + `Agent_Calismalari` + AK GIPS & FULLBOARD fabrika dosyaları + `Musteri_Urun_Fiyatlari`):
 

@@ -129,7 +129,8 @@ def run_all_excel_exports(output_dir: Path, created_files: list[Path]) -> None:
 def run_incoming_despatch_step(args: argparse.Namespace, output_dir: Path, created_files: list[Path]) -> None:
     """Fetch incoming e-despatches and create the incoming despatch -> outgoing invoice report."""
 
-    start_date = args.start_date.date().isoformat() if args.start_date else default_start_date()
+    # E-irsaliye raporu, fatura ingest tarihinden bağımsız olarak yıl başından başlar.
+    start_date = default_start_date()
     end_date = args.end_date.date().isoformat() if args.end_date else datetime.now().date().isoformat()
     pdf_paths = expand_pdf_paths(args.despatch_description_pdf)
     pdf_descriptions = parse_pdf_despatch_descriptions(pdf_paths) if pdf_paths else None

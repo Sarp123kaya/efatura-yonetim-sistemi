@@ -1,9 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Giriş - E-Fatura Web Panel{% endblock %}
+{% block title %}Giriş — E-Fatura Panel{% endblock %}
 {% block content %}
-<section class="auth-card">
-    <h1>Panele Giriş</h1>
-    <p class="muted">VPS kullanımında `WEB_ADMIN_USER`, `WEB_ADMIN_PASSWORD` ve `WEB_SECRET_KEY` değerlerini `.env` içinde ayarlayın.</p>
+<div class="auth-card">
+    <div style="text-align:center;margin-bottom:24px;">
+        <div style="width:52px;height:52px;background:var(--primary);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 12px;">📊</div>
+        <h1 style="font-size:20px;margin-bottom:4px;">E-Fatura Panel</h1>
+        <p style="font-size:13px;color:var(--text-3);">Devam etmek için giriş yapın</p>
+    </div>
     <form method="post" class="stack">
         <label>
             Kullanıcı adı
@@ -13,7 +16,10 @@
             Parola
             <input type="password" name="password" autocomplete="current-password" required>
         </label>
-        <button type="submit">Giriş Yap</button>
+        <button type="submit" style="width:100%;justify-content:center;margin-top:4px;">Giriş Yap</button>
     </form>
-</section>
+    <p style="font-size:12px;color:var(--text-3);text-align:center;margin-top:16px;">
+        VPS kullanımında <code>WEB_ADMIN_USER</code>, <code>WEB_ADMIN_PASSWORD</code> ve <code>WEB_SECRET_KEY</code> değerlerini <code>.env</code> içinde ayarlayın.
+    </p>
+</div>
 {% endblock %}

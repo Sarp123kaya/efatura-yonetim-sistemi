@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}Alış Faturası Oluştur — AKG / FLL{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1>🏭 Alış Faturası Oluştur</h1>
+    <p>AK GİPS (AKG) ve FULLBOARD (FLL) gelen e-faturalarını otomatik alış faturasına çevirir</p>
+  </div>
+  <a class="button secondary sm" href="{{ url_for('dashboard') }}">← Ana Sayfa</a>
+</div>
+
+<!-- ── Durum Kartı ── -->
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px;">
+  <div class="metric-card accent-blue">
+    <div class="metric-top"><div class="metric-icon blue">🏭</div></div>
+    <div class="metric-value" id="statFactory">—</div>
+    <div class="metric-label">Fabrika (AKG+FLL)</div>
+  </div>
+  <div class="metric-card" style="border-left:3px solid var(--success,#22c55e);">
+    <div class="metric-top"><div class="metric-icon" style="background:#f0fdf4;color:#22c55e;">✅</div></div>
+    <div class="metric-value" id="statSuccess" style="color:var(--success,#22c55e);">—</div>
+    <div class="metric-label">Son Çalıştırmada Başarılı</div>
+  </div>
+  <div class="metric-card" style="border-left:3px solid var(--warning,#f59e0b);">
+    <div class="metric-top"><div class="metric-icon" style="background:#fffbeb;color:#f59e0b;">⏳</div></div>
+    <div class="metric-value" id="statLive">—</div>
+    <div class="metric-label">İşbaşı'nda Bekleyen</div>
+  </div>
+</div>
+
+<!-- ── Adım Adım Kullanım ── -->
+<div class="card" style="margin-bottom:16px;">
+  <div class="card-header">
+    <h2>📋 Nasıl Kullanılır?</h2>
+  </div>
+  <div class="card-body">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;">
+
+      <div style="background:var(--surface-2,#f8fafc);border-radius:10px;padding:16px;border:1px solid var(--border);">
+        <div style="font-size:28px;margin-bottom:8px;">1️⃣</div>
+        <div style="font-weight:600;margin-bottom:4px;">app.isbasi.com'a Giriş Yap</div>
+        <div style="font-size:13px;color:var(--text-3);">
+          Tarayıcınızda <a href="https://app.isbasi.com" target="_blank" style="color:var(--primary);">app.isbasi.com</a>'a giriş yapın.
+          Oturum açıksa bu adımı atlayabilirsiniz.
+        </div>
+      </div>
+
+      <div style="background:var(--surface-2,#f8fafc);border-radius:10px;padding:16px;border:1px solid var(--border);">
+        <div style="font-size:28px;margin-bottom:8px;">2️⃣</div>
+        <div style="font-weight:600;margin-bottom:4px;">Butona Tıkla</div>
+        <div style="font-size:13px;color:var(--text-3);">
+          Aşağıdaki <strong>"Başlat"</strong> butonuna tıklayın.
+          Gelen E-Faturalar sayfası yeni sekmede açılır ve script panonuza kopyalanır.
+        </div>
+      </div>
+
+      <div style="background:var(--surface-2,#f8fafc);border-radius:10px;padding:16px;border:1px solid var(--border);">
+        <div style="font-size:28px;margin-bottom:8px;">3️⃣</div>
+        <div style="font-weight:600;margin-bottom:4px;">Konsola Yapıştır</div>
+        <div style="font-size:13px;color:var(--text-3);">
+          Yeni sekmede <kbd style="background:var(--border);border-radius:3px;padding:1px 5px;">F12</kbd>
+          → Konsol → <kbd style="background:var(--border);border-radius:3px;padding:1px 5px;">Ctrl+V</kbd>
+          yapıştır → <kbd style="background:var(--border);border-radius:3px;padding:1px 5px;">Enter</kbd>.
+        </div>
+      </div>
+
+      <div style="background:var(--surface-2,#f8fafc);border-radius:10px;padding:16px;border:1px solid var(--border);">
+        <div style="font-size:28px;margin-bottom:8px;">4️⃣</div>
+        <div style="font-weight:600;margin-bottom:4px;">Bekle &amp; Kontrol Et</div>
+        <div style="font-size:13px;color:var(--text-3);">
+          Script "Kabul Edilmiş" AKG/FLL faturalarını sırayla işler.
+          Tamamlanınca konsolda özet görünür: <code style="font-size:11px;">window.__importResults</code>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Başlat Butonu -->
+    <div style="margin-top:20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+      <button class="button" id="btnStart"
+        style="font-size:15px;padding:10px 24px;gap:8px;display:flex;align-items:center;"
+        onclick="startImport()">
+        🚀 Başlat — Sayfayı Aç &amp; Scripti Kopyala
+      </button>
+      <button class="button secondary" onclick="copyScript()" title="Sadece scripti kopyala">
+        📋 Sadece Kopyala
+      </button>
+      <a href="https://app.isbasi.com/invoice/myinvoices" target="_blank"
+         class="button secondary" style="text-decoration:none;">
+        🔗 app.isbasi.com'u Aç
+      </a>
+    </div>
+
+    <div id="copyToast" style="display:none;margin-top:10px;padding:8px 14px;
+      background:#f0fdf4;border:1px solid #86efac;border-radius:6px;color:#166534;font-size:13px;">
+      ✅ Script panonuza kopyalandı! Yeni sekmede <strong>F12 → Konsol → Yapıştır → Enter</strong>
+    </div>
+  </div>
+</div>
+
+<!-- ── Bookmarklet ── -->
+<div class="card" style="margin-bottom:16px;">
+  <div class="card-header">
+    <h2>🔖 Bookmarklet (İsteğe Bağlı)</h2>
+    <span style="font-size:12px;color:var(--text-3);">Yer imi çubuğuna sürükle → app.isbasi.com'da tıkla</span>
+  </div>
+  <div class="card-body">
+    <p style="font-size:13px;color:var(--text-2);margin-bottom:12px;">
+      Aşağıdaki bağlantıyı tarayıcınızın <strong>yer imi çubuğuna sürükleyin</strong>.
+      Sonraki seferlerde app.isbasi.com'da o yer imine tıklamanız yeterli.
+    </p>
+    <a id="bookmarkletLink" href="#" style="
+      display:inline-block;padding:8px 16px;
+      background:var(--surface-2,#f1f5f9);border:1px solid var(--border);
+      border-radius:6px;font-size:13px;font-weight:600;color:var(--primary);
+      text-decoration:none;cursor:grab;"
+      title="Yer imi çubuğuna sürükleyin">
+      📌 AKG/FLL Alış Aktarımı
+    </a>
+    <p style="font-size:11px;color:var(--text-3);margin-top:8px;">
+      ⚠️ Chrome'da bookmarklet'ler <code>javascript:</code> ile başlayan yer imleridir;
+      adres çubuğundan sürükleyerek eklenebilir.
+    </p>
+  </div>
+</div>
+
+<!-- ── Script Önizleme ── -->
+<div class="card" style="margin-bottom:16px;">
+  <div class="card-header">
+    <h2>🔧 Batch Import Script</h2>
+    <button class="button secondary sm" onclick="copyScript()">📋 Kopyala</button>
+  </div>
+  <div class="card-body" style="padding:0;">
+    <pre id="scriptCode" style="
+      margin:0;padding:16px;overflow-x:auto;
+      background:var(--surface-2,#1e1e2e);color:#cdd6f4;
+      border-radius:0 0 8px 8px;font-size:12px;line-height:1.6;
+      max-height:320px;overflow-y:auto;"><code>{{ batch_js }}</code></pre>
+  </div>
+</div>
+
+<!-- ── Önceki Aktarım Geçmişi ── -->
+{% if import_logs %}
+<div class="card">
+  <div class="card-header">
+    <h2>📜 Önceki Aktarımlar</h2>
+    <span style="font-size:12px;color:var(--text-3);">Son {{ import_logs | length }} kayıt</span>
+  </div>
+  <div class="card-body" style="padding:0;">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Tarih</th>
+            <th class="num">İşlenen</th>
+            <th class="num">Başarılı</th>
+            <th class="num">Hata</th>
+            <th>Dosya</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for log in import_logs %}
+        <tr>
+          <td style="white-space:nowrap;font-size:13px;">{{ log.date }}</td>
+          <td class="num">{{ log.total }}</td>
+          <td class="num" style="color:var(--success,#22c55e);font-weight:600;">{{ log.success }}</td>
+          <td class="num" style="color:{% if log.failed > 0 %}var(--danger,#ef4444){% else %}var(--text-3){% endif %};">{{ log.failed }}</td>
+          <td style="font-size:11px;color:var(--text-3);">{{ log.filename }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script>
+// ── Script içeriği ──
+var BATCH_SCRIPT = document.getElementById('scriptCode').textContent;
+
+function copyScript() {
+  navigator.clipboard.writeText(BATCH_SCRIPT).then(function () {
+    var toast = document.getElementById('copyToast');
+    toast.style.display = 'block';
+    setTimeout(function () { toast.style.display = 'none'; }, 5000);
+  }).catch(function () {
+    // Eski tarayıcı fallback
+    var ta = document.createElement('textarea');
+    ta.value = BATCH_SCRIPT;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    var toast = document.getElementById('copyToast');
+    toast.style.display = 'block';
+    setTimeout(function () { toast.style.display = 'none'; }, 5000);
+  });
+}
+
+function startImport() {
+  window.open('https://app.isbasi.com/invoice/myinvoices', '_blank');
+  copyScript();
+}
+
+// ── Bookmarklet oluştur ──
+(function () {
+  var minified = BATCH_SCRIPT.replace(/\n\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  var bm = 'javascript:(function(){' + minified.replace(/^.*?function batchImport\(\)/, 'function batchImport()') + '})();';
+  // Daha basit: doğrudan wrap
+  bm = 'javascript:void(' + encodeURIComponent('(' + minified + ')()') + ')';
+  document.getElementById('bookmarkletLink').href = bm;
+})();
+
+// ── İşbaşı sayfasından canlı istatistik çek ──
+// (Sadece aynı domain'den çalışır; cross-origin engel nedeniyle sadece DB verisi gösterilir)
+(function () {
+  // Veritabanı tabanlı fabrika sayacı
+  var incoming = {{ factory_incoming_count | default(0) }};
+  document.getElementById('statFactory').textContent = incoming;
+  document.getElementById('statLive').textContent = '{{ pending_count | default("—") }}';
+  {% if last_run_success is defined %}
+  document.getElementById('statSuccess').textContent = '{{ last_run_success }}';
+  {% endif %}
+})();
+</script>
+
+{% endblock %}
