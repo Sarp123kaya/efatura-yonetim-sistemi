@@ -156,34 +156,38 @@
 </div>
 
 <!-- ── Çekler ── -->
-{% if checks %}
-{% set cek_toplam = checks | sum(attribute='amount') %}
-{% set en_yakin_vade = checks | map(attribute='maturity_date') | select | sort | first %}
+{% if check_gelecek_adedi or check_odenen_toplam %}
 <div class="card" style="margin-bottom:16px;">
     <div class="card-header">
         <h3>💳 Çekler</h3>
-        <span style="font-size:12px;color:var(--text-3);">Onaylı çekler</span>
+        <span style="font-size:12px;color:var(--text-3);">Vadesi gelecek çekler listelenir</span>
     </div>
     <div class="card-body">
         <div class="stats-grid" style="margin-bottom:16px;">
             <div class="metric-card accent-blue">
-                <div class="metric-top"><div class="metric-icon blue">💳</div></div>
-                <div class="metric-value">{{ checks | length }}</div>
-                <div class="metric-label">Çek Adedi</div>
+                <div class="metric-top"><div class="metric-icon blue">📅</div></div>
+                <div class="metric-value">{{ check_gelecek_adedi }}</div>
+                <div class="metric-label">Vadesi Gelecek Adet</div>
             </div>
             <div class="metric-card">
                 <div class="metric-top"><div class="metric-icon blue">💰</div></div>
-                <div class="metric-value" style="font-size:16px;">{{ cek_toplam | format_tl }}</div>
-                <div class="metric-label">Toplam Çek Tutarı</div>
+                <div class="metric-value" style="font-size:16px;">{{ check_gelecek_toplam | format_tl }}</div>
+                <div class="metric-label">Vadesi Gelecek Tutar</div>
             </div>
             <div class="metric-card">
-                <div class="metric-top"><div class="metric-icon blue">📅</div></div>
-                <div class="metric-value" style="font-size:14px;">
-                    {% if en_yakin_vade %}{{ en_yakin_vade | format_dt }}{% else %}—{% endif %}
-                </div>
-                <div class="metric-label">En Yakın Vade</div>
+                <div class="metric-top"><div class="metric-icon blue">✅</div></div>
+                <div class="metric-value">{{ check_odenen_adedi }}</div>
+                <div class="metric-label">Ödenen Adet (vadesi geçmiş)</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-top"><div class="metric-icon blue">💵</div></div>
+                <div class="metric-value" style="font-size:16px;">{{ check_odenen_toplam | format_tl }}</div>
+                <div class="metric-label">Ödenen Tutar (vadesi geçmiş)</div>
             </div>
         </div>
+
+        {% if checks %}
+        <h4 style="font-size:13px;margin:0 0 10px;color:var(--text-2);">Vadesi Gelecek Çekler</h4>
         <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
             <table>
                 <thead>
@@ -192,7 +196,6 @@
                         <th>Banka</th>
                         <th class="num">Tutar</th>
                         <th class="num">Vade Tarihi</th>
-                        <th class="num">İşlem Tarihi</th>
                         <th>Durum</th>
                     </tr>
                 </thead>
@@ -205,16 +208,11 @@
                     <td class="num muted-cell" style="white-space:nowrap;">
                         {{ ck.maturity_date | format_dt if ck.maturity_date else '—' }}
                     </td>
-                    <td class="num muted-cell" style="white-space:nowrap;">
-                        {{ ck.transaction_date | format_dt if ck.transaction_date else '—' }}
-                    </td>
                     <td>
                         {% if ck.status == 'PORTFOLIO' %}
                             <span class="badge" style="background:#dbeafe;color:#1d4ed8;border-color:#93c5fd;">PORTFÖYDE</span>
-                        {% elif ck.status == 'CLEARED' %}
-                            <span class="badge" style="background:#dcfce7;color:#15803d;border-color:#86efac;">TAHSİL EDİLDİ</span>
-                        {% elif ck.status == 'BOUNCED' %}
-                            <span class="badge" style="background:#fee2e2;color:#b91c1c;border-color:#fca5a5;">KARŞILIKSIZ</span>
+                        {% elif ck.status in ('CASHED', 'CLEARED', 'BANK') %}
+                            <span class="badge" style="background:#dcfce7;color:#15803d;border-color:#86efac;">TAHSİL</span>
                         {% else %}
                             <span class="badge muted-cell">{{ ck.status or '—' }}</span>
                         {% endif %}
@@ -224,6 +222,9 @@
                 </tbody>
             </table>
         </div>
+        {% elif check_gelecek_adedi == 0 %}
+        <p style="font-size:13px;color:var(--text-3);margin:0;">Vadesi gelecek çek yok.</p>
+        {% endif %}
     </div>
 </div>
 {% endif %}

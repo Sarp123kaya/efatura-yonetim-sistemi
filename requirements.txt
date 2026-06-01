@@ -3,7 +3,6 @@
 # Web Dashboard
 Flask>=3.0.0
 gunicorn>=21.2.0
-Django>=4.2.0
 
 # Excel İşlemleri
 openpyxl>=3.1.0
@@ -20,13 +19,12 @@ psycopg2-binary>=2.9.0
 psycopg[binary]>=3.1.0
 
 # Çekler — PDF ve OCR desteği
+# Not: python-dateutil ayrı listelenmez; pandas zaten alt bağımlılık olarak getirir.
 pdfplumber>=0.10.0
-python-dateutil>=2.8.0
 pydantic>=2.0.0
 
 # Veri İşleme
-# Not: Parser'lar şu an standart kütüphane `xml.etree.ElementTree` kullanıyor; lxml opsiyoneldir.
-lxml>=4.9.0
+# Not: Parser'lar standart kütüphane `xml.etree.ElementTree` kullanır; lxml gerekmez.
 
 # Güvenlik (şifre girişi)
 # (getpass standart kütüphanede mevcut)

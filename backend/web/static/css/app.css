@@ -135,6 +135,10 @@ code {
     white-space: nowrap;
 }
 .brand:hover { text-decoration: none; }
+.brand.active .brand-icon {
+    box-shadow: 0 0 0 2px var(--primary-soft);
+    outline: 2px solid color-mix(in srgb, var(--primary) 35%, transparent);
+}
 .brand-icon {
     width: 32px;
     height: 32px;
@@ -156,11 +160,20 @@ code {
     flex-shrink: 0;
 }
 
-nav {
+.topbar-spacer {
+    flex: 1;
+    min-width: 12px;
+}
+
+.nav-main,
+.nav-tools {
     display: flex;
     align-items: center;
     gap: 2px;
-    flex: 1;
+}
+
+.nav-tools {
+    margin-right: 4px;
 }
 
 nav a {
@@ -187,7 +200,6 @@ nav a.active {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-left: auto;
 }
 
 .theme-toggle {
@@ -627,6 +639,63 @@ tr.row-yok      td:first-child { border-left: 3px solid var(--warning); }
 .summary-pill.green .dot  { background: var(--success); }
 .summary-pill.red   .dot  { background: var(--danger);  }
 .summary-pill.yellow .dot { background: var(--warning); }
+
+/* ── Side panel (ekstre karşılaştırma) ─────────────────────────────── */
+.side-panel-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s ease;
+    z-index: 900;
+}
+.side-panel-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+}
+.side-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: min(920px, 96vw);
+    height: 100vh;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.12);
+    transform: translateX(100%);
+    transition: transform .28s ease;
+    z-index: 901;
+    display: flex;
+    flex-direction: column;
+}
+.side-panel.open { transform: translateX(0); }
+.side-panel-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    flex-shrink: 0;
+}
+.side-panel-body {
+    flex: 1;
+    overflow: auto;
+    padding: 16px 20px 24px;
+}
+.side-panel-close {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-2);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 4px 10px;
+}
+.side-panel-close:hover { background: var(--bg); }
 
 /* ── Responsive ────────────────────────────────────────────────────── */
 @media (max-width: 1100px) {

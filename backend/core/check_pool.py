@@ -706,6 +706,18 @@ class CheckPoolRepository:
         )
 
     def find_existing_check_id(self, record: StoredCheckRecord) -> Optional[int]:
+        check_no = (record.check_no or "").strip()
+        if check_no:
+            row = self.db.query_one(
+                """
+                SELECT id FROM checks
+                WHERE TRIM(check_no) = %s
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (check_no,),
+            )
+            return int(row["id"]) if row else None
         row = self.db.query_one(
             """
             SELECT id FROM checks

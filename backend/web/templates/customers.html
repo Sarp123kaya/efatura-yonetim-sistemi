@@ -70,8 +70,9 @@
                         <th class="num">Son Fatura</th>
                         <th class="num">Bakiye (API)</th>
                         <th class="num">Dönem Başı Bakiye</th>
-                        <th class="num">Çek Adedi</th>
-                        <th class="num">Toplam Çek</th>
+                        <th class="num">Gelecek Çek</th>
+                        <th class="num">Gelecek Tutar</th>
+                        <th class="num">Ödenen Tutar</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -121,6 +122,13 @@
                             <span style="color:var(--text-3);">—</span>
                         {% endif %}
                     </td>
+                    <td class="num muted-cell">
+                        {% if c.cek_odenen_toplam %}
+                            {{ c.cek_odenen_toplam | format_tl }}
+                        {% else %}
+                            <span style="color:var(--text-3);">—</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
                 </tbody>
@@ -136,6 +144,7 @@
                         <td></td>
                         <td class="num">{{ customers | sum(attribute='cek_adedi') }}</td>
                         <td class="num">{{ customers | sum(attribute='cek_toplam') | format_tl }}</td>
+                        <td class="num">{{ customers | sum(attribute='cek_odenen_toplam') | format_tl }}</td>
                     </tr>
                 </tfoot>
             </table>

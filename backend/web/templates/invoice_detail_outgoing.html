@@ -11,6 +11,7 @@
         </div>
     </div>
     <a class="button secondary sm" href="{{ url_for('dashboard') }}">← Ana Sayfa</a>
+    <a class="button secondary sm" href="{{ url_for('irsaliye.index', invoice=invoice.invoice_no) }}">İrsaliye Düzelt</a>
 </div>
 
 <!-- ── Fatura Bilgileri ── -->
@@ -38,6 +39,18 @@
             <dd>
                 {% for code in invoice.irsaliye_codes %}
                 <code style="font-size:12px;margin-right:6px;padding:2px 6px;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;">{{ code }}</code>
+                {% endfor %}
+                {% if invoice.irsaliye_codes_override %}
+                <span style="display:block;margin-top:6px;font-size:11px;color:var(--warning);">Manuel override aktif</span>
+                {% endif %}
+            </dd>
+            {% endif %}
+
+            {% if invoice.irsaliye_codes_extracted and invoice.irsaliye_codes_override %}
+            <dt>API Kodu</dt>
+            <dd>
+                {% for code in invoice.irsaliye_codes_extracted %}
+                <code style="font-size:11px;margin-right:6px;color:var(--text-3);">{{ code }}</code>
                 {% endfor %}
             </dd>
             {% endif %}

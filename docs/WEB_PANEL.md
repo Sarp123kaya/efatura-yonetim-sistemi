@@ -30,6 +30,8 @@ ISBASI_USERNAME=...
 ISBASI_PASSWORD=...
 WEB_ADMIN_USER=admin
 WEB_ADMIN_PASSWORD=uzun-ve-guclu-bir-parola
+WEB_PERSONAL_USER=c
+WEB_PERSONAL_PASSWORD=uzun-ve-guclu-bir-parola-2
 WEB_SECRET_KEY=uzun-random-bir-secret
 WEB_SESSION_COOKIE_SECURE=true
 ```

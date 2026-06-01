@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}İrsaliye Kodu Düzelt — E-Fatura Panel{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>🔧 İrsaliye Kodu Düzelt</h1>
+        <p>Fatura açıklamasında yanlış girilen irsaliye kodlarını kalıcı olarak düzeltin. Agent çalıştığında override silinmez.</p>
+    </div>
+    <a class="button secondary sm" href="{{ url_for('dashboard') }}">← Ana Sayfa</a>
+</div>
+
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header"><h3>🔍 Fatura Ara</h3></div>
+    <div class="card-body">
+        <form method="get" action="{{ url_for('irsaliye.index') }}" class="inline-form" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+            <label style="flex:1;min-width:220px;">
+                <span style="display:block;font-size:12px;color:var(--text-3);margin-bottom:4px;">Fatura no veya kısmi arama (örn. DKE402)</span>
+                <input type="text" name="q" value="{{ query }}" placeholder="DKE2026000000402" style="width:100%;">
+            </label>
+            <button type="submit" class="button">Ara</button>
+        </form>
+    </div>
+</div>
+
+{% if search_results and not selected %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header">
+        <h3>📋 Arama Sonuçları</h3>
+        <span style="font-size:12px;color:var(--text-3);">{{ search_results | length }} kayıt</span>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Fatura No</th>
+                        <th>Tarih</th>
+                        <th>Firma</th>
+                        <th>Kullanılan Kod</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for row in search_results %}
+                    <tr>
+                        <td><code>{{ row.invoice_no }}</code></td>
+                        <td>{{ row.issue_date | format_dt if row.issue_date else '—' }}</td>
+                        <td>{{ row.firm_name or '—' }}</td>
+                        <td>
+                            {% for code in row.effective %}
+                            <code style="font-size:11px;margin-right:4px;">{{ code }}</code>
+                            {% else %}
+                            <span class="muted-cell">—</span>
+                            {% endfor %}
+                        </td>
+                        <td><a class="button secondary sm" href="{{ url_for('irsaliye.index', invoice=row.invoice_no) }}">Seç</a></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if selected %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header">
+        <h3>📄 {{ selected.invoice_no }}</h3>
+        <a class="button secondary sm" href="{{ url_for('invoice_outgoing_detail', invoice_id=selected.id) }}">Fatura detayı</a>
+    </div>
+    <div class="card-body">
+        <dl class="meta">
+            <dt>Firma</dt>
+            <dd>{{ selected.firm_name or '—' }}</dd>
+            <dt>Tarih</dt>
+            <dd>{{ selected.issue_date | format_dt if selected.issue_date else '—' }}</dd>
+            <dt>Tutar</dt>
+            <dd>{{ selected.total_tl | format_tl if selected.total_tl else '—' }}</dd>
+            <dt>Açıklama</dt>
+            <dd style="white-space:pre-wrap;max-width:640px;font-size:13px;color:var(--text-2);">{{ selected.description or '—' }}</dd>
+            <dt>API (extracted)</dt>
+            <dd>
+                {% for code in selected.extracted %}
+                <code style="font-size:12px;margin-right:6px;">{{ code }}</code>
+                {% else %}
+                <span class="muted-cell">—</span>
+                {% endfor %}
+            </dd>
+            <dt>Override</dt>
+            <dd>
+                {% if selected.override %}
+                    {% for code in selected.override %}
+                    <code style="font-size:12px;margin-right:6px;background:var(--warning-soft);">{{ code }}</code>
+                    {% endfor %}
+                {% else %}
+                <span class="muted-cell">(yok)</span>
+                {% endif %}
+            </dd>
+            <dt>Kullanılan</dt>
+            <dd>
+                {% for code in selected.effective %}
+                <code style="font-size:12px;margin-right:6px;background:var(--success-soft);">{{ code }}</code>
+                {% else %}
+                <span class="muted-cell">—</span>
+                {% endfor %}
+            </dd>
+        </dl>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header"><h3>✏️ Kod Düzelt</h3></div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('irsaliye.apply') }}" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end;">
+            <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token') }}">
+            <input type="hidden" name="invoice_ref" value="{{ selected.invoice_no }}">
+            <label>
+                <span style="display:block;font-size:12px;color:var(--text-3);margin-bottom:4px;">Yanlış kod</span>
+                <input type="text" name="from_code" placeholder="A-2683" required style="width:100%;">
+            </label>
+            <label>
+                <span style="display:block;font-size:12px;color:var(--text-3);margin-bottom:4px;">Doğru kod</span>
+                <input type="text" name="to_code" placeholder="F-2683" required style="width:100%;">
+            </label>
+            <button type="submit" class="button">Düzeltmeyi Uygula</button>
+        </form>
+        <p style="margin-top:12px;font-size:12px;color:var(--text-3);">
+            Kısa format kabul edilir: <code>A-64</code> otomatik <code>A-00064</code> olur.
+        </p>
+    </div>
+</div>
+
+{% if selected.has_override %}
+<div class="card" style="margin-bottom:16px;border-left:3px solid var(--warning);">
+    <div class="card-header"><h3>↩️ Override Kaldır</h3></div>
+    <div class="card-body">
+        <p style="margin-bottom:12px;color:var(--text-2);">
+            Override silinirse eşleştirme ve export tekrar API'den çekilen kodu kullanır.
+        </p>
+        <form method="post" action="{{ url_for('irsaliye.clear') }}" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token') }}">
+            <input type="hidden" name="invoice_ref" value="{{ selected.invoice_no }}">
+            <button type="submit" class="button secondary">Override'ı Kaldır</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+
+{% if overrides %}
+<div class="card">
+    <div class="card-header">
+        <h3>📌 Aktif Override Kayıtları</h3>
+        <span style="font-size:12px;color:var(--text-3);">{{ overrides | length }} kayıt</span>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Fatura No</th>
+                        <th>Firma</th>
+                        <th>API</th>
+                        <th>Override</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for row in overrides %}
+                    <tr>
+                        <td><code>{{ row.invoice_no }}</code></td>
+                        <td>{{ row.firm_name or '—' }}</td>
+                        <td>
+                            {% for code in row.extracted %}
+                            <code style="font-size:11px;margin-right:4px;">{{ code }}</code>
+                            {% else %}—{% endfor %}
+                        </td>
+                        <td>
+                            {% for code in row.override or [] %}
+                            <code style="font-size:11px;margin-right:4px;background:var(--warning-soft);">{{ code }}</code>
+                            {% endfor %}
+                        </td>
+                        <td><a class="button secondary sm" href="{{ url_for('irsaliye.index', invoice=row.invoice_no) }}">Düzenle</a></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

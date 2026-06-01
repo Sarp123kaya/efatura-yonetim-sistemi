@@ -11,7 +11,7 @@ import time
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from flask import (
     Flask,
@@ -196,12 +196,11 @@ def create_app() -> Flask:
         if request.method == "POST":
             username = request.form.get("username", "")
             password = request.form.get("password", "")
-            expected_user = os.getenv("WEB_ADMIN_USER", "admin")
-            expected_password = os.getenv("WEB_ADMIN_PASSWORD", "admin")
-            if not os.getenv("WEB_ADMIN_PASSWORD") and not is_local_request():
-                flash("Varsayılan parola ile dış ağdan giriş engellendi. WEB_ADMIN_PASSWORD ayarlayın.", "error")
+            ok, err = authenticate_web_user(username, password)
+            if err:
+                flash(err, "error")
                 return render_template("login.html"), 403
-            if secrets.compare_digest(username, expected_user) and secrets.compare_digest(password, expected_password):
+            if ok:
                 session.clear()
                 session["user"] = username
                 session["csrf_token"] = secrets.token_urlsafe(32)
@@ -290,6 +289,8 @@ def create_app() -> Flask:
             """
             SELECT o.id, o.invoice_no, o.issue_date, o.firm_name, o.total_tl, o.taxable_amount,
                    o.description,
+                   o.irsaliye_codes AS irsaliye_codes_extracted,
+                   o.irsaliye_codes_override,
                    COALESCE(o.irsaliye_codes_override, o.irsaliye_codes) AS irsaliye_codes,
                    o.change_type, o.last_change_at, o.created_at, o.updated_at,
                    x.line_items, x.fetched_at AS xml_fetched_at
@@ -301,7 +302,7 @@ def create_app() -> Flask:
         )
         if not invoice:
             abort(404)
-        for field in ("irsaliye_codes", "line_items"):
+        for field in ("irsaliye_codes", "irsaliye_codes_extracted", "irsaliye_codes_override", "line_items"):
             val = invoice.get(field)
             if isinstance(val, str):
                 try:
@@ -457,26 +458,18 @@ def create_app() -> Flask:
             """
         )
 
-        cek_rows = db.query(
-            """
-            SELECT account_name,
-                   COUNT(*)            AS cek_adedi,
-                   COALESCE(SUM(amount), 0) AS cek_toplam,
-                   MAX(maturity_date)  AS son_vade
-            FROM checks
-            WHERE review_status = 'APPROVED'
-            GROUP BY account_name
-            """
-        )
-        cek_by_name = {r["account_name"]: r for r in cek_rows}
+        from backend.core.check_customer_views import load_check_summaries_for_all_customers
+
+        cek_by_name = load_check_summaries_for_all_customers()
 
         customers_out = []
         for c in rows:
             c = dict(c)
             firm_name = c.get("name") or ""
             cek_info = cek_by_name.get(firm_name) or {}
-            c["cek_adedi"] = cek_info.get("cek_adedi", 0)
-            c["cek_toplam"] = cek_info.get("cek_toplam", 0)
+            c["cek_adedi"] = cek_info.get("gelecek_adedi", 0)
+            c["cek_toplam"] = cek_info.get("gelecek_toplam", 0)
+            c["cek_odenen_toplam"] = cek_info.get("odenen_toplam", 0)
             c["cek_son_vade"] = cek_info.get("son_vade")
             customers_out.append(c)
 
@@ -533,25 +526,20 @@ def create_app() -> Flask:
             elif val is None:
                 inv["irsaliye_codes"] = []
 
-        checks = db.query(
-            """
-            SELECT id, check_no, bank_name, amount, currency,
-                   maturity_date, transaction_date, status, review_status,
-                   raw_description
-            FROM checks
-            WHERE account_name = %s
-              AND review_status = 'APPROVED'
-            ORDER BY maturity_date DESC
-            """,
-            (firm["name"],),
-        )
+        from backend.core.check_customer_views import load_checks_by_customer_name
+
+        check_view = load_checks_by_customer_name(firm["name"] or "")
 
         return render_template(
             "customer_detail.html",
             firm=firm,
             invoices=invoices,
             monthly_summary=monthly_summary,
-            checks=checks,
+            checks=check_view["upcoming_checks"],
+            check_gelecek_adedi=check_view["gelecek_adedi"],
+            check_gelecek_toplam=check_view["gelecek_toplam"],
+            check_odenen_adedi=check_view["odenen_adedi"],
+            check_odenen_toplam=check_view["odenen_toplam"],
         )
 
     @app.route("/customers/<firm_id>/profit")
@@ -817,10 +805,50 @@ def validate_csrf() -> None:
         abort(400, "Geçersiz form oturumu.")
 
 
+def web_auth_accounts() -> list[tuple[str, str, str, bool]]:
+    """
+    (username, password, env_password_key, uses_default_password)
+    """
+    admin_user = os.getenv("WEB_ADMIN_USER", "admin")
+    admin_pass = os.getenv("WEB_ADMIN_PASSWORD", "admin")
+    personal_user = os.getenv("WEB_PERSONAL_USER", "c")
+    personal_pass = os.getenv("WEB_PERSONAL_PASSWORD", "c")
+    return [
+        (admin_user, admin_pass, "WEB_ADMIN_PASSWORD", not os.getenv("WEB_ADMIN_PASSWORD")),
+        (personal_user, personal_pass, "WEB_PERSONAL_PASSWORD", not os.getenv("WEB_PERSONAL_PASSWORD")),
+    ]
+
+
+def authenticate_web_user(username: str, password: str) -> tuple[bool, Optional[str]]:
+    """Web panel girişi. (başarılı, hata_mesajı)"""
+    accounts = web_auth_accounts()
+    matched: Optional[tuple[str, str, str, bool]] = None
+    for user, pwd, _env_key, _default in accounts:
+        if not user:
+            continue
+        if secrets.compare_digest(username, user) and secrets.compare_digest(password, pwd):
+            matched = (user, pwd, _env_key, _default)
+            break
+    if matched is None:
+        return False, None
+
+    _user, _pwd, env_key, uses_default = matched
+    if uses_default and not is_local_request():
+        return False, (
+            f"Varsayılan parola ile dış ağdan giriş engellendi. "
+            f"{env_key} değerini .env içinde ayarlayın."
+        )
+    return True, None
+
+
 def setup_warnings() -> list[str]:
     warnings = []
     if not os.getenv("WEB_ADMIN_PASSWORD"):
         warnings.append("WEB_ADMIN_PASSWORD ayarlı değil; varsayılan admin/admin sadece yerel test için uygundur.")
+    if not os.getenv("WEB_PERSONAL_PASSWORD"):
+        warnings.append(
+            "WEB_PERSONAL_PASSWORD ayarlı değil; varsayılan kişisel giriş (c/c) sadece yerel test için uygundur."
+        )
     if not os.getenv("WEB_SECRET_KEY"):
         warnings.append("WEB_SECRET_KEY ayarlı değil; servis restart sonrası oturumlar geçersiz olur.")
     if not config.ISBASI_PASSWORD:
@@ -888,6 +916,12 @@ except Exception:
 try:
     from backend.web.alis_fatura_routes import register_alis_fatura_routes
     register_alis_fatura_routes(app)
+except Exception:
+    pass
+
+try:
+    from backend.web.irsaliye_routes import register_irsaliye_routes
+    register_irsaliye_routes(app)
 except Exception:
     pass
 

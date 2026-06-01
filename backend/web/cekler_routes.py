@@ -103,24 +103,105 @@ def _upsert_import_session(conn, session_obj) -> None:
     )
 
 
+def _normalize_check_no(check_no: Optional[str]) -> str:
+    from backend.core.check_excel_incremental import normalize_check_no
+    return normalize_check_no(check_no)
+
+
 def _find_existing_check_id(conn, record) -> Optional[int]:
-    from statement_extractor.src.validators import duplicate_key
-    customer_name, check_no, bank, maturity_date, amount = duplicate_key(record)
+    """Aynı çek numarası = aynı çek (mükerrer kayıt önlenir)."""
+    check_no = _normalize_check_no(record.check_no)
+    if not check_no:
+        from statement_extractor.src.validators import duplicate_key
+        customer_name, cno, bank, maturity_date, amount = duplicate_key(record)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id FROM checks
+            WHERE COALESCE(account_name, '') = COALESCE(%s, '')
+              AND check_no = %s
+              AND bank_name = %s
+              AND maturity_date = %s
+              AND COALESCE(amount, 0) = COALESCE(%s, 0)
+            LIMIT 1
+            """,
+            (customer_name, cno, bank, maturity_date, amount),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else None
+
     cur = conn.cursor()
     cur.execute(
         """
         SELECT id FROM checks
-        WHERE COALESCE(account_name, '') = COALESCE(%s, '')
-          AND check_no = %s
-          AND bank_name = %s
-          AND maturity_date = %s
-          AND COALESCE(amount, 0) = COALESCE(%s, 0)
+        WHERE TRIM(check_no) = %s
+        ORDER BY id DESC
         LIMIT 1
         """,
-        (customer_name, check_no, bank, maturity_date, amount),
+        (check_no,),
     )
     row = cur.fetchone()
     return int(row[0]) if row else None
+
+
+def _update_check(conn, check_id: int, record, source_file: Optional[str] = None) -> None:
+    from datetime import datetime
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE checks SET
+            account_name = %s,
+            company_name = %s,
+            movement_type = %s,
+            bank_name = %s,
+            sent_to = %s,
+            amount = %s,
+            currency = %s,
+            maturity_date = %s,
+            transaction_date = %s,
+            document_date = %s,
+            voucher_no = %s,
+            document_no = %s,
+            source_file = COALESCE(%s, source_file),
+            source_page = %s,
+            raw_description = %s,
+            raw_line = %s,
+            parse_warning = %s,
+            source_type = %s,
+            import_session_id = %s,
+            review_status = %s,
+            source_row_index = %s,
+            source_sheet = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (
+            record.customer_name,
+            record.company_name,
+            record.movement_type.value,
+            record.bank,
+            record.sent_to,
+            record.amount,
+            record.currency,
+            record.maturity_date,
+            record.transaction_date,
+            record.document_date,
+            record.voucher_no,
+            record.document_no,
+            source_file or record.source_file,
+            record.source_page,
+            record.raw_description,
+            record.raw_line,
+            record.parse_warning,
+            record.source_type.value,
+            record.import_session_id,
+            record.review_status.value,
+            record.source_row_index,
+            record.source_sheet,
+            datetime.utcnow(),
+            check_id,
+        ),
+    )
 
 
 def _insert_check(conn, record, source_file: Optional[str] = None) -> int:
@@ -220,25 +301,66 @@ def _insert_import_row(
     )
 
 
-def _write_import_result(import_result) -> dict[str, int]:
+def _write_import_result(import_result, plan=None) -> dict[str, int]:
     """İmport sonucunu psycopg2 ile veritabanına yazar."""
-    inserted = skipped = errors = 0
+    from backend.core.check_excel_incremental import (
+        IncrementalImportPlan,
+        filter_import_records,
+    )
+
+    if plan is None:
+        plan = IncrementalImportPlan(is_first_upload=True, compared_with_snapshot=False)
+
+    all_records = import_result.records
+    records = filter_import_records(all_records, plan)
+    skipped_unchanged = len(all_records) - len(records)
+
+    inserted = updated = skipped_dup = errors = 0
+    modified_nos = plan.modified_check_nos or set()
+
     with db.get_connection(auto_commit=False) as conn:
         _upsert_import_session(conn, import_result.import_session)
-        for record in import_result.records:
+        source_file = import_result.import_session.source_file
+        for record in records:
             try:
                 existing_id = _find_existing_check_id(conn, record)
+                check_norm = _normalize_check_no(record.check_no)
+                is_modified = check_norm in modified_nos
+
                 if existing_id is not None:
-                    _insert_import_row(conn, record, duplicate_of_check_id=existing_id)
-                    skipped += 1
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT COALESCE(account_name,'') AS an FROM checks WHERE id = %s",
+                        (existing_id,),
+                    )
+                    old_name_row = cur.fetchone()
+                    old_len = len(old_name_row[0]) if old_name_row else 0
+                    new_len = len((record.customer_name or "").strip())
+                    enrich = new_len > old_len
+
+                    if is_modified or enrich:
+                        _update_check(conn, existing_id, record, source_file=source_file)
+                        _insert_import_row(conn, record, canonical_check_id=existing_id)
+                        updated += 1
+                    else:
+                        _insert_import_row(conn, record, duplicate_of_check_id=existing_id)
+                        skipped_dup += 1
                 else:
-                    new_id = _insert_check(conn, record, source_file=import_result.import_session.source_file)
+                    new_id = _insert_check(conn, record, source_file=source_file)
                     _insert_import_row(conn, record, canonical_check_id=new_id)
                     inserted += 1
             except Exception:
                 errors += 1
         conn.commit()
-    return {"inserted": inserted, "skipped": skipped, "errors": errors, "total": len(import_result.records)}
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "skipped": skipped_dup,
+        "skipped_unchanged": skipped_unchanged,
+        "errors": errors,
+        "total": len(all_records),
+        "imported": len(records),
+    }
 
 
 def _db_tables_exist() -> bool:
@@ -254,33 +376,63 @@ def _load_checks_summary() -> dict[str, Any]:
         row = db.query_one(
             """
             SELECT
-                COUNT(*) AS toplam,
-                COALESCE(SUM(amount), 0) AS toplam_tutar,
-                COUNT(*) FILTER (WHERE maturity_date < CURRENT_DATE) AS vadesi_gecmis,
-                COUNT(*) FILTER (WHERE maturity_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30) AS bu_ay_vadeli,
-                COUNT(*) FILTER (WHERE maturity_date > CURRENT_DATE + 30) AS ileri_vadeli
-            FROM checks
-            WHERE review_status IN ('APPROVED', 'IMPORTED')
+                COUNT(DISTINCT NULLIF(TRIM(check_no), '')) AS toplam,
+                COALESCE(SUM(amount), 0) AS toplam_tutar_raw,
+                COUNT(*) FILTER (WHERE maturity_date < CURRENT_DATE) AS vadesi_gecmis_raw,
+                COUNT(*) FILTER (
+                    WHERE maturity_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30
+                ) AS bu_ay_vadeli_raw,
+                COUNT(*) FILTER (WHERE maturity_date > CURRENT_DATE + 30) AS ileri_vadeli_raw
+            FROM (
+                SELECT DISTINCT ON (TRIM(check_no))
+                    check_no, amount, maturity_date, review_status
+                FROM checks
+                WHERE review_status IN ('APPROVED', 'IMPORTED')
+                  AND TRIM(check_no) <> ''
+                ORDER BY TRIM(check_no), id DESC
+            ) u
             """
         )
-        return dict(row) if row else {}
+        if not row:
+            return {}
+        out = dict(row)
+        out["toplam_tutar"] = out.pop("toplam_tutar_raw", 0)
+        out["vadesi_gecmis"] = out.pop("vadesi_gecmis_raw", 0)
+        out["bu_ay_vadeli"] = out.pop("bu_ay_vadeli_raw", 0)
+        out["ileri_vadeli"] = out.pop("ileri_vadeli_raw", 0)
+        return out
     except Exception:
         return {}
 
 
-def _load_checks_list(limit: int = 300) -> list[dict]:
+def _load_checks_list(limit: int = 300, *, overdue_only: bool = False) -> list[dict]:
+    if overdue_only:
+        maturity_filter = "maturity_date IS NOT NULL AND maturity_date < CURRENT_DATE"
+        order_by = "maturity_date DESC, created_at DESC"
+    else:
+        maturity_filter = "(maturity_date IS NULL OR maturity_date >= CURRENT_DATE)"
+        order_by = "maturity_date ASC, created_at DESC"
+
     try:
         return db.query(
-            """
+            f"""
             SELECT
                 id, check_no, bank_name, account_name, company_name, amount, currency,
                 maturity_date, status, review_status, source_type, source_file, sent_to,
                 created_at
-            FROM checks
-            ORDER BY
-                CASE WHEN maturity_date >= CURRENT_DATE THEN 0 ELSE 1 END,
-                maturity_date ASC,
-                created_at DESC
+            FROM (
+                SELECT DISTINCT ON (TRIM(check_no))
+                    id, check_no, bank_name, account_name, company_name, amount, currency,
+                    maturity_date, status, review_status, source_type, source_file, sent_to,
+                    created_at
+                FROM checks
+                WHERE TRIM(check_no) <> ''
+                  AND {maturity_filter}
+                ORDER BY TRIM(check_no),
+                    LENGTH(COALESCE(account_name, '') || COALESCE(company_name, '')) DESC,
+                    id DESC
+            ) u
+            ORDER BY {order_by}
             LIMIT %s
             """,
             (limit,),
@@ -327,6 +479,18 @@ _TEMPLATE = """
 </div>
 {% else %}
 
+{% if duplicate_groups and duplicate_groups > 0 %}
+<div class="alert warning" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+  <span style="font-size:13px;">
+    ⚠️ {{ duplicate_groups }} çek numarasında mükerrer kayıt var (aynı no, farklı müşteri satırı).
+  </span>
+  <form method="POST" action="{{ url_for('cekler.dedupe') }}" style="margin:0;">
+    <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token') }}">
+    <button type="submit" class="button sm">🔗 Mükerrerleri Birleştir</button>
+  </form>
+</div>
+{% endif %}
+
 <!-- ── Özet Kartlar ── -->
 {% if summary %}
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px;">
@@ -340,7 +504,11 @@ _TEMPLATE = """
   </div>
   <div class="card" style="padding:16px;text-align:center;">
     <div style="font-size:24px;font-weight:700;color:#dc2626;">{{ summary.vadesi_gecmis or 0 }}</div>
-    <div style="font-size:12px;color:var(--text-3);margin-top:4px;">Vadesi Geçmiş</div>
+    <div style="font-size:12px;color:var(--text-3);margin-top:4px;">Ödenen (vadesi geçmiş)</div>
+    {% if summary.vadesi_gecmis and not show_overdue %}
+    <a href="{{ url_for('cekler.index', show_overdue=1) }}"
+       style="display:inline-block;margin-top:8px;font-size:11px;color:var(--primary);">Listede göster →</a>
+    {% endif %}
   </div>
   <div class="card" style="padding:16px;text-align:center;">
     <div style="font-size:24px;font-weight:700;color:#d97706;">{{ summary.bu_ay_vadeli or 0 }}</div>
@@ -374,7 +542,8 @@ _TEMPLATE = """
         </button>
       </form>
       <p style="font-size:11px;color:var(--text-3);margin-top:8px;">
-        Ekstre veya çek listesi içeren Excel dosyalarını yükleyin. Mevcut çekler atlanır.
+        Yeni Excel önceki sürümle karşılaştırılır; yalnızca eklenen ve değişen satırlar işlenir.
+        Aynı çek numarası tekrar eklenmez.
       </p>
     </div>
   </div>
@@ -406,9 +575,20 @@ _TEMPLATE = """
 
 <!-- ── Çek Tablosu ── -->
 <div class="card" style="margin-bottom:20px;">
-  <div class="card-header">
-    <h3>📋 Çek Listesi</h3>
-    <span style="font-size:12px;color:var(--text-3);">{{ checks | length }} çek</span>
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+    <div>
+      <h3>{% if show_overdue %}✅ Ödenen Çekler{% else %}📋 Çek Listesi{% endif %}</h3>
+      <span style="font-size:12px;color:var(--text-3);">{{ checks | length }} çek</span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      {% if show_overdue %}
+      <a class="button sm" href="{{ url_for('cekler.index') }}">← Aktif Çekler</a>
+      {% elif summary and summary.vadesi_gecmis %}
+      <a class="button secondary sm" href="{{ url_for('cekler.index', show_overdue=1) }}">
+        ✅ Ödenen ({{ summary.vadesi_gecmis }})
+      </a>
+      {% endif %}
+    </div>
   </div>
   {% if checks %}
   <div class="card-body" style="padding:0;">
@@ -476,7 +656,16 @@ _TEMPLATE = """
   {% else %}
   <div class="card-body">
     <p style="color:var(--text-3);text-align:center;padding:24px 0;">
-      Henüz çek kaydı yok. Yukarıdan Excel veya görüntü yükleyin.
+      {% if show_overdue %}
+      Ödenen (vadesi geçmiş) çek kaydı yok.
+      {% else %}
+      Henüz aktif çek kaydı yok. Yukarıdan Excel veya görüntü yükleyin.
+      {% if summary and summary.vadesi_gecmis %}
+      <br><a href="{{ url_for('cekler.index', show_overdue=1) }}" style="font-size:12px;">
+        {{ summary.vadesi_gecmis }} ödenen çeki görüntüle
+      </a>
+      {% endif %}
+      {% endif %}
     </p>
   </div>
   {% endif %}
@@ -540,14 +729,52 @@ _TEMPLATE = """
 @_login_required
 def index():
     tables_exist = _db_tables_exist()
+    duplicate_groups = 0
+    show_overdue = request.args.get("show_overdue") == "1"
+    summary = _load_checks_summary() if tables_exist else {}
+    checks = (
+        _load_checks_list(overdue_only=show_overdue)
+        if tables_exist
+        else []
+    )
+    if tables_exist:
+        from backend.core.check_dedupe import count_duplicate_check_groups
+        duplicate_groups = count_duplicate_check_groups()
     return render_template_string(
         _TEMPLATE,
         tables_exist=tables_exist,
-        summary=_load_checks_summary() if tables_exist else {},
-        checks=_load_checks_list() if tables_exist else [],
+        summary=summary,
+        checks=checks,
         sessions=_load_import_sessions() if tables_exist else [],
+        duplicate_groups=duplicate_groups,
+        show_overdue=show_overdue,
         today_date=date.today(),
     )
+
+
+@cekler_bp.route("/dedupe", methods=["POST"])
+@_login_required
+def dedupe():
+    _validate_csrf()
+    from backend.core.check_dedupe import (
+        count_duplicate_check_groups,
+        dedupe_checks_by_check_no,
+        ensure_unique_check_no_index,
+    )
+
+    before = count_duplicate_check_groups()
+    if before == 0:
+        flash("Mükerrer çek kaydı bulunamadı.", "success")
+        return redirect(url_for("cekler.index"))
+
+    stats = dedupe_checks_by_check_no()
+    ensure_unique_check_no_index()
+    flash(
+        f"{stats['groups']} çek numarasında birleştirme yapıldı; "
+        f"{stats['removed']} mükerrer satır silindi.",
+        "success",
+    )
+    return redirect(url_for("cekler.index"))
 
 
 @cekler_bp.route("/upload-excel", methods=["POST"])
@@ -585,23 +812,59 @@ def upload_excel():
             flash(f"Excel okunamadı: {exc}", "error")
             return redirect(url_for("cekler.index"))
 
-        # Orijinal dosya adını koru
         import_result.import_session.source_file = filename
         for record in import_result.records:
             record.source_file = filename
 
+        from backend.core.check_excel_incremental import (
+            build_incremental_plan,
+            save_snapshot_after_upload,
+        )
+
         try:
-            stats = _write_import_result(import_result)
+            plan = build_incremental_plan(tmp_path)
+        except Exception as exc:
+            flash(f"Excel karşılaştırması yapılamadı: {exc}", "error")
+            return redirect(url_for("cekler.index"))
+
+        try:
+            stats = _write_import_result(import_result, plan=plan)
         except Exception as exc:
             flash(f"Veritabanına yazılamadı: {exc}", "error")
             return redirect(url_for("cekler.index"))
 
-        flash(
-            f"Excel aktarıldı — {stats['inserted']} yeni çek eklendi, "
-            f"{stats['skipped']} tekrar atlandı"
-            + (f", {stats['errors']} hata" if stats["errors"] else "") + ".",
-            "success",
-        )
+        try:
+            save_snapshot_after_upload(tmp_path)
+        except Exception:
+            pass
+
+        from backend.core.check_dedupe import dedupe_checks_by_check_no, ensure_unique_check_no_index
+        dedupe_stats = dedupe_checks_by_check_no()
+        if dedupe_stats.get("removed"):
+            ensure_unique_check_no_index()
+
+        parts = []
+        if plan.compared_with_snapshot:
+            parts.append(
+                f"Excel farkı: {plan.added_count} yeni satır, "
+                f"{plan.modified_count} değişen, {plan.unchanged_count} aynı"
+            )
+        elif plan.is_first_upload:
+            parts.append("İlk yükleme — tüm satırlar işlendi")
+
+        parts.append(f"{stats['inserted']} yeni çek")
+        if stats.get("updated"):
+            parts.append(f"{stats['updated']} güncellendi")
+        if stats.get("skipped"):
+            parts.append(f"{stats['skipped']} aynı çek no (atlandı)")
+        if stats.get("skipped_unchanged"):
+            parts.append(f"{stats['skipped_unchanged']} değişmeyen satır atlandı")
+        if stats.get("errors"):
+            parts.append(f"{stats['errors']} hata")
+        if dedupe_stats.get("removed"):
+            parts.append(f"{dedupe_stats['removed']} mükerrer çek birleştirildi")
+
+        flash(" · ".join(parts) + ".", "success")
 
     finally:
         if tmp_path and tmp_path.exists():

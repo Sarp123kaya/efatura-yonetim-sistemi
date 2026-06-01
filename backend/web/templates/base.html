@@ -17,38 +17,42 @@
 </head>
 <body>
 <header class="topbar">
-    <a class="brand" href="{{ url_for('dashboard') }}">
-        <span class="brand-icon">📊</span>
-        E-Fatura Panel
+    {% set ep = request.endpoint %}
+    <a class="brand {{ 'active' if ep == 'dashboard' else '' }}" href="{{ url_for('dashboard') }}" title="Ana Sayfa">
+        <span class="brand-icon">🏠</span>
     </a>
 
     {% if session.get("user") %}
     <div class="topbar-sep"></div>
-    {% set ep = request.endpoint %}
-    <nav>
-        <a href="{{ url_for('dashboard') }}" class="{{ 'active' if ep == 'dashboard' else '' }}">
-            <span>🏠</span><span>Ana Sayfa</span>
-        </a>
-        <a href="{{ url_for('jobs') }}" class="{{ 'active' if ep in ('jobs', 'job_detail') else '' }}">
-            <span>⚙️</span><span>İşler</span>
-        </a>
-        <a href="{{ url_for('reports') }}" class="{{ 'active' if ep == 'reports' else '' }}">
-            <span>📁</span><span>Raporlar</span>
-        </a>
+    <nav class="nav-main">
         <a href="{{ url_for('stats') }}" class="{{ 'active' if ep == 'stats' else '' }}">
             <span>📊</span><span>İstatistikler</span>
         </a>
         <a href="{{ url_for('customers') }}" class="{{ 'active' if ep in ('customers', 'customer_detail') else '' }}">
             <span>👥</span><span>Müşteriler</span>
         </a>
-        <a href="{{ url_for('alis_fatura.index') }}" class="{{ 'active' if ep == 'alis_fatura.index' else '' }}">
-            <span>🏭</span><span>Alış Faturası</span>
-        </a>
         <a href="{{ url_for('cekler.index') }}" class="{{ 'active' if ep and ep.startswith('cekler') else '' }}">
             <span>💳</span><span>Çekler</span>
         </a>
         <a href="{{ url_for('ekstre.index') }}" class="{{ 'active' if ep and ep.startswith('ekstre') else '' }}">
             <span>📄</span><span>Ekstre</span>
+        </a>
+    </nav>
+
+    <div class="topbar-spacer"></div>
+
+    <nav class="nav-tools">
+        <a href="{{ url_for('jobs') }}" class="{{ 'active' if ep in ('jobs', 'job_detail') else '' }}">
+            <span>⚙️</span><span>İşler</span>
+        </a>
+        <a href="{{ url_for('reports') }}" class="{{ 'active' if ep == 'reports' else '' }}">
+            <span>📁</span><span>Raporlar</span>
+        </a>
+        <a href="{{ url_for('irsaliye.index') }}" class="{{ 'active' if ep and ep.startswith('irsaliye') else '' }}">
+            <span>🔧</span><span>İrsaliye Düzelt</span>
+        </a>
+        <a href="{{ url_for('alis_fatura.index') }}" class="{{ 'active' if ep == 'alis_fatura.index' or (ep and ep.startswith('purchase_import')) else '' }}">
+            <span>🏭</span><span>Alış Faturası</span>
         </a>
     </nav>
     {% endif %}

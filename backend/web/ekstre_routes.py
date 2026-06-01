@@ -4,12 +4,12 @@
 Flask route'ları — Fabrika Ekstre Yönetimi
 ==========================================
 PDF ekstre dosyalarını yükleyip parse eder ve veritabanına kaydeder.
+Gelen e-faturalarla karşılaştırma desteği içerir.
 """
 from __future__ import annotations
 
 import secrets
 import tempfile
-from decimal import Decimal
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -27,6 +27,8 @@ from flask import (
 )
 
 from backend.core.db import db
+from backend.core.ekstre_invoice_matcher import compare_ekstre_with_incoming
+from backend.core.ekstre_live_balance import compute_live_balance
 
 ekstre_bp = Blueprint("ekstre", __name__, url_prefix="/ekstre")
 
@@ -101,50 +103,123 @@ def _write_rows(rows, source_file: str) -> dict[str, int]:
 
 
 def _load_summary() -> list[dict]:
+    """Her fabrika + cari hesap için yalnızca son yüklenen PDF (source_file) özeti."""
     try:
         return db.query(
             """
+            WITH latest_batch AS (
+                SELECT DISTINCT ON (fabrika, COALESCE(cari_hesap_kodu, ''))
+                    fabrika,
+                    COALESCE(cari_hesap_kodu, '') AS hesap_key,
+                    cari_hesap_kodu,
+                    source_file,
+                    created_at AS yukleme_tarihi
+                FROM factory_statements
+                ORDER BY fabrika, COALESCE(cari_hesap_kodu, ''),
+                         created_at DESC NULLS LAST, id DESC
+            )
             SELECT
-                fabrika,
-                cari_hesap_kodu,
-                COUNT(*)                                              AS satir_adedi,
-                COALESCE(SUM(borc),  0)                              AS toplam_borc,
-                COALESCE(SUM(alacak),0)                              AS toplam_alacak,
-                MIN(tarih)                                           AS ilk_tarih,
-                MAX(tarih)                                           AS son_tarih,
-                MAX(bakiye)    FILTER (WHERE bakiye_yon = 'A')       AS son_bakiye_a,
-                MAX(bakiye)    FILTER (WHERE bakiye_yon = 'B')       AS son_bakiye_b
-            FROM factory_statements
-            GROUP BY fabrika, cari_hesap_kodu
-            ORDER BY fabrika, cari_hesap_kodu
+                fs.fabrika,
+                fs.cari_hesap_kodu,
+                lb.source_file,
+                lb.yukleme_tarihi,
+                COUNT(*)                         AS satir_adedi,
+                COALESCE(SUM(fs.borc), 0)        AS toplam_borc,
+                COALESCE(SUM(fs.alacak), 0)      AS toplam_alacak,
+                MIN(fs.tarih)                    AS ilk_tarih,
+                MAX(fs.tarih)                    AS son_tarih,
+                MAX(fs.bakiye) FILTER (WHERE fs.bakiye_yon = 'A') AS son_bakiye_a,
+                MAX(fs.bakiye) FILTER (WHERE fs.bakiye_yon = 'B') AS son_bakiye_b
+            FROM factory_statements fs
+            INNER JOIN latest_batch lb
+                ON fs.fabrika = lb.fabrika
+               AND COALESCE(fs.cari_hesap_kodu, '') = lb.hesap_key
+               AND fs.source_file = lb.source_file
+            GROUP BY fs.fabrika, fs.cari_hesap_kodu, lb.source_file, lb.yukleme_tarihi
+            ORDER BY fs.fabrika, fs.cari_hesap_kodu
             """
         )
     except Exception:
         return []
 
 
-def _load_rows(fabrika: Optional[str], hesap: Optional[str], limit: int = 500) -> list[dict]:
-    filters = []
-    params: list[Any] = []
-    if fabrika:
-        filters.append("fabrika = %s")
-        params.append(fabrika)
-    if hesap:
-        filters.append("COALESCE(cari_hesap_kodu,'') = %s")
+def _latest_source_file(fabrika: str, hesap: Optional[str]) -> Optional[str]:
+    filters = ["fabrika = %s"]
+    params: list[Any] = [fabrika]
+    if hesap is not None:
+        filters.append("COALESCE(cari_hesap_kodu, '') = %s")
         params.append(hesap)
-    where = ("WHERE " + " AND ".join(filters)) if filters else ""
-    params.append(limit)
+    where = " AND ".join(filters)
     try:
-        return db.query(
+        row = db.query_one(
             f"""
+            SELECT source_file
+            FROM factory_statements
+            WHERE {where}
+            ORDER BY created_at DESC NULLS LAST, id DESC
+            LIMIT 1
+            """,
+            tuple(params),
+        )
+        return row.get("source_file") if row else None
+    except Exception:
+        return None
+
+
+def _load_rows(fabrika: Optional[str], hesap: Optional[str], limit: int = 500) -> list[dict]:
+    try:
+        if fabrika and hesap is not None:
+            latest = _latest_source_file(fabrika, hesap)
+            if not latest:
+                return []
+            return db.query(
+                """
+                SELECT tarih, fis_no, fis_turu, aciklama, borc, alacak,
+                       bakiye, bakiye_yon, cari_hesap_kodu, fabrika, source_file
+                FROM factory_statements
+                WHERE fabrika = %s
+                  AND COALESCE(cari_hesap_kodu, '') = %s
+                  AND source_file = %s
+                ORDER BY tarih DESC, id DESC
+                LIMIT %s
+                """,
+                (fabrika, hesap, latest, limit),
+            )
+
+        if fabrika:
+            return db.query(
+                """
+                WITH latest_batch AS (
+                    SELECT DISTINCT ON (COALESCE(cari_hesap_kodu, ''))
+                        COALESCE(cari_hesap_kodu, '') AS hesap_key,
+                        source_file
+                    FROM factory_statements
+                    WHERE fabrika = %s
+                    ORDER BY COALESCE(cari_hesap_kodu, ''),
+                             created_at DESC NULLS LAST, id DESC
+                )
+                SELECT fs.tarih, fs.fis_no, fs.fis_turu, fs.aciklama, fs.borc, fs.alacak,
+                       fs.bakiye, fs.bakiye_yon, fs.cari_hesap_kodu, fs.fabrika, fs.source_file
+                FROM factory_statements fs
+                INNER JOIN latest_batch lb
+                    ON COALESCE(fs.cari_hesap_kodu, '') = lb.hesap_key
+                   AND fs.source_file = lb.source_file
+                WHERE fs.fabrika = %s
+                ORDER BY fs.tarih DESC, fs.id DESC
+                LIMIT %s
+                """,
+                (fabrika, fabrika, limit),
+            )
+
+        return db.query(
+            """
             SELECT tarih, fis_no, fis_turu, aciklama, borc, alacak,
                    bakiye, bakiye_yon, cari_hesap_kodu, fabrika, source_file
             FROM factory_statements
-            {where}
             ORDER BY tarih DESC, id DESC
             LIMIT %s
             """,
-            tuple(params),
+            (limit,),
         )
     except Exception:
         return []
@@ -180,7 +255,7 @@ _TEMPLATE = """
   <div>
     <h1>🏭 Fabrika Ekstre</h1>
     <div style="margin-top:6px;font-size:13px;color:var(--text-3);">
-      Fabrikadan gelen PDF cari hesap ekstrelerini yükleyin ve işlem geçmişini görüntüleyin.
+      Fabrikadan gelen PDF cari hesap ekstrelerini yükleyin; fatura satırlarını gelen e-faturalarla karşılaştırın.
     </div>
   </div>
   <a class="button secondary sm" href="{{ url_for('dashboard') }}">← Ana Sayfa</a>
@@ -193,34 +268,79 @@ _TEMPLATE = """
 </div>
 {% else %}
 
-<!-- ── Yükleme Formu ── -->
-<div class="card" style="margin-bottom:20px;">
-  <div class="card-header"><h3>📤 PDF Ekstre Yükle</h3></div>
-  <div class="card-body">
-    <form method="POST" action="{{ url_for('ekstre.upload') }}" enctype="multipart/form-data">
-      <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token') }}">
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
-        <div>
+<!-- ── Yükleme + Özet Karşılaştırma ── -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+
+  <div class="card">
+    <div class="card-header"><h3>📤 Güncel Ekstre Yükle</h3></div>
+    <div class="card-body">
+      <form method="POST" action="{{ url_for('ekstre.upload') }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token') }}">
+        <div style="margin-bottom:12px;">
           <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;">
             Ekstre PDF Dosyası
           </label>
           <input type="file" name="pdf_file" accept=".pdf" required
-            style="padding:6px;border:1px solid var(--border);border-radius:6px;
-                   font-size:13px;background:var(--bg-2);min-width:280px;">
+            style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;
+                   font-size:13px;background:var(--bg-2);">
         </div>
-        <button type="submit" class="button sm">⬆️ Yükle &amp; Kaydet</button>
-      </div>
-    </form>
-    <p style="font-size:11px;color:var(--text-3);margin-top:8px;">
-      AK GİPS ve FULLBOARD formatları desteklenir. Aynı dosya tekrar yüklense mevcut satırlar atlanır.
-    </p>
+        <button type="submit" class="button sm" style="width:100%;">⬆️ Yükle &amp; Kaydet</button>
+      </form>
+      <p style="font-size:11px;color:var(--text-3);margin-top:8px;">
+        AK GİPS ve FULLBOARD cari hesap ekstreleri (PDF). Aynı satırlar tekrar yüklenince atlanır.
+      </p>
+    </div>
   </div>
+
+  <div class="card" style="border-left:3px solid var(--primary);">
+    <div class="card-header"><h3>🔍 Gelen Fatura Karşılaştırması</h3></div>
+    <div class="card-body">
+      {% if compare and not compare.error %}
+      <p style="font-size:12px;color:var(--text-3);margin:0 0 12px;">
+        {% if compare.date_from and compare.date_to %}
+          {{ compare.date_from.strftime('%d.%m.%Y') }} – {{ compare.date_to.strftime('%d.%m.%Y') }}
+        {% endif %}
+        · {{ compare.fabrika }}
+        {% if compare.source_file %} · {{ compare.source_file }}{% endif %}
+      </p>
+      <div class="summary-row" style="margin-bottom:12px;">
+        <span class="summary-pill green"><span class="dot"></span>Eşleşti <strong>{{ compare.summary.eslesti }}</strong></span>
+        <span class="summary-pill yellow"><span class="dot"></span>Fark <strong>{{ compare.summary.tutar_farki + compare.summary.tarih_farki }}</strong></span>
+        <span class="summary-pill red"><span class="dot"></span>Ekstrede Yok <strong>{{ compare.summary.ekstrede_yok }}</strong></span>
+        <span class="summary-pill red"><span class="dot"></span>Faturada Yok <strong>{{ compare.summary.faturada_yok }}</strong></span>
+      </div>
+      {% if compare.summary.eslesti == compare.summary.toplam and compare.summary.toplam > 0 %}
+      <div class="alert success" style="margin:0;font-size:12px;padding:8px 12px;">
+        ✅ Tüm fatura satırları gelen e-faturalarla bire bir eşleşiyor.
+      </div>
+      {% elif sel_fabrika %}
+      <a class="button sm"
+         href="{{ url_for('ekstre.index') }}?fabrika={{ sel_fabrika | urlencode }}{% if sel_hesap %}&hesap={{ sel_hesap | urlencode }}{% endif %}&compare=1">
+        Detaylı Karşılaştırma →
+      </a>
+      {% endif %}
+      {% elif compare and compare.error %}
+      <div class="alert error" style="margin:0;font-size:12px;">{{ compare.error }}</div>
+      {% elif sel_fabrika %}
+      <p style="font-size:13px;color:var(--text-3);margin:0;">Ekstrede fatura satırı bulunamadı veya karşılaştırma yapılamadı.</p>
+      {% else %}
+      <p style="font-size:13px;color:var(--text-3);margin:0;">
+        Fabrika filtresi seçin; ekstredeki fatura satırları gelen e-faturalarla otomatik karşılaştırılır
+        (fiş no = fatura no).
+      </p>
+      {% endif %}
+    </div>
+  </div>
+
 </div>
 
 <!-- ── Özet Kartlar ── -->
 {% if summary %}
 <div class="card" style="margin-bottom:20px;">
-  <div class="card-header"><h3>📊 Cari Hesap Özeti</h3></div>
+  <div class="card-header">
+    <h3>📊 Cari Hesap Özeti</h3>
+    <span style="font-size:12px;color:var(--text-3);">Son yüklenen ekstre dosyasına göre</span>
+  </div>
   <div class="card-body" style="padding:0;">
     <div class="table-wrap">
       <table>
@@ -233,7 +353,8 @@ _TEMPLATE = """
             <th class="num">Toplam Alacak</th>
             <th>İlk Tarih</th>
             <th>Son Tarih</th>
-            <th>Filtre</th>
+            <th>Kaynak Dosya</th>
+            <th>İşlem</th>
           </tr>
         </thead>
         <tbody>
@@ -250,10 +371,17 @@ _TEMPLATE = """
           <td style="font-size:12px;color:var(--text-3);">
             {{ s.son_tarih.strftime('%d.%m.%Y') if s.son_tarih else '—' }}
           </td>
-          <td>
+          <td style="font-size:11px;color:var(--text-3);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+              title="{{ s.source_file or '' }}{% if s.yukleme_tarihi %} · {{ s.yukleme_tarihi.strftime('%d.%m.%Y %H:%M') }}{% endif %}">
+            {{ s.source_file or '—' }}
+          </td>
+          <td style="white-space:nowrap;">
             <a class="button secondary sm"
                href="{{ url_for('ekstre.index') }}?fabrika={{ s.fabrika | urlencode }}&hesap={{ (s.cari_hesap_kodu or '') | urlencode }}"
                style="font-size:11px;padding:2px 8px;">Göster</a>
+            <a class="button sm"
+               href="{{ url_for('ekstre.index') }}?fabrika={{ s.fabrika | urlencode }}&hesap={{ (s.cari_hesap_kodu or '') | urlencode }}&compare=1"
+               style="font-size:11px;padding:2px 8px;margin-left:4px;">Karşılaştır</a>
           </td>
         </tr>
         {% endfor %}
@@ -292,12 +420,121 @@ _TEMPLATE = """
       </div>
       {% endif %}
       <button type="submit" class="button secondary sm">Filtrele</button>
+      {% if sel_fabrika %}
+      <a class="button sm"
+         href="{{ url_for('ekstre.index') }}?fabrika={{ sel_fabrika | urlencode }}{% if sel_hesap %}&hesap={{ sel_hesap | urlencode }}{% endif %}&compare=1">
+        🔍 Gelen Faturalarla Karşılaştır
+      </a>
+      {% endif %}
       {% if sel_fabrika or sel_hesap %}
       <a href="{{ url_for('ekstre.index') }}" class="button secondary sm">✕ Temizle</a>
       {% endif %}
     </form>
   </div>
 </div>
+
+{% if sel_fabrika and live_balance %}
+<!-- ── Canlı Bakiye Takibi ── -->
+<div class="card" style="margin-bottom:16px;border-left:3px solid #6366f1;">
+  <div class="card-header">
+    <h3>📈 Canlı Bakiye Takibi</h3>
+    {% if live_balance.has_baseline %}
+    <span style="font-size:12px;color:var(--text-3);">
+      {{ live_balance.fabrika }}{% if live_balance.cari_hesap_kodu %} · {{ live_balance.cari_hesap_kodu }}{% endif %}
+    </span>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    <p style="font-size:12px;color:var(--text-3);margin:0 0 14px;line-height:1.5;">
+      Son ekstre yüklemesinden sonra gelen faturalar otomatik düşülür.
+      Bir sonraki ekstre gelene kadar tahmini bakiyeyi buradan takip edebilirsiniz.
+    </p>
+
+    {% if not live_balance.has_baseline %}
+    <div class="alert warning" style="margin:0;font-size:13px;">
+      {{ live_balance.message or 'Önce güncel ekstre PDF yükleyin.' }}
+    </div>
+    {% else %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:16px;">
+      <div style="padding:12px;background:var(--bg-2);border-radius:8px;">
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">Ekstre baz bakiye</div>
+        <strong style="font-size:18px;">
+          {{ live_balance.baseline_balance | format_tl }}
+          <span style="font-size:12px;color:{% if live_balance.baseline_balance_yon == 'A' %}#059669{% else %}#dc2626{% endif %};">
+            ({{ live_balance.baseline_balance_yon }})
+          </span>
+        </strong>
+      </div>
+      <div style="padding:12px;background:var(--bg-2);border-radius:8px;">
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">Baz tarih</div>
+        <strong style="font-size:15px;">
+          {{ live_balance.baseline_date.strftime('%d.%m.%Y') if live_balance.baseline_date else '—' }}
+        </strong>
+        {% if live_balance.baseline_source_file %}
+        <div style="font-size:10px;color:var(--text-3);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+             title="{{ live_balance.baseline_source_file }}">
+          {{ live_balance.baseline_source_file }}
+        </div>
+        {% endif %}
+      </div>
+      <div style="padding:12px;background:var(--bg-2);border-radius:8px;">
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">Düşülen yeni fatura</div>
+        <strong style="font-size:18px;">{{ live_balance.adjustment_count }}</strong>
+      </div>
+      <div style="padding:12px;background:rgba(99,102,241,0.08);border-radius:8px;border:1px solid rgba(99,102,241,0.2);">
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">Güncel tahmini bakiye</div>
+        <strong style="font-size:20px;color:#4338ca;">
+          {{ live_balance.projected_balance | format_tl }}
+          <span style="font-size:13px;color:{% if live_balance.projected_balance_yon == 'A' %}#059669{% else %}#dc2626{% endif %};">
+            ({{ live_balance.projected_balance_yon }})
+          </span>
+        </strong>
+      </div>
+    </div>
+
+    <p style="font-size:12px;color:var(--text-2);margin:0 0 12px;">{{ live_balance.message }}</p>
+
+    {% if live_balance.adjustments %}
+    <h4 style="font-size:13px;margin:0 0 8px;">Son ekstreden sonra düşülen faturalar</h4>
+    <div class="table-wrap" style="max-height:280px;overflow-y:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Fatura No</th>
+            <th>Tarih</th>
+            <th class="num">Tutar</th>
+            <th class="num">Kalan Bakiye</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for adj in live_balance.adjustments %}
+        <tr>
+          <td>
+            <a href="{{ url_for('invoice_incoming_detail', invoice_id=adj.invoice_id) }}"
+               style="color:var(--primary);text-decoration:none;">
+              <code style="font-size:11px;color:inherit;">{{ adj.invoice_id }}</code>
+            </a>
+          </td>
+          <td style="font-size:12px;white-space:nowrap;">
+            {{ adj.issue_date.strftime('%d.%m.%Y') if adj.issue_date else '—' }}
+          </td>
+          <td class="num" style="color:#dc2626;">−{{ adj.amount | format_tl }}</td>
+          <td class="num" style="font-size:12px;">
+            {{ adj.running_balance | format_tl }}
+            <span style="font-size:10px;color:{% if adj.running_balance_yon == 'A' %}#059669{% else %}#dc2626{% endif %};">
+              ({{ adj.running_balance_yon }})
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+{% endif %}
 
 <!-- ── İşlem Tablosu ── -->
 <div class="card">
@@ -364,6 +601,145 @@ _TEMPLATE = """
   {% endif %}
 </div>
 
+{% if show_compare %}
+<!-- ── Karşılaştırma Yan Paneli ── -->
+<div class="side-panel-overlay open" id="compareOverlay"></div>
+<aside class="side-panel open" id="comparePanel" aria-label="Ekstre karşılaştırma paneli">
+  <div class="side-panel-header">
+    <div>
+      <h2 style="margin:0 0 4px;font-size:17px;">🔍 Ekstre ↔ Gelen Fatura</h2>
+      <div style="font-size:12px;color:var(--text-3);line-height:1.5;">
+        <strong>{{ compare.fabrika }}</strong>
+        {% if compare.cari_hesap_kodu %}
+          · Cari: <code>{{ compare.cari_hesap_kodu }}</code>
+        {% else %}
+          · Tüm cari hesaplar
+        {% endif %}
+        {% if compare.date_from and compare.date_to %}
+          · {{ compare.date_from.strftime('%d.%m.%Y') }} – {{ compare.date_to.strftime('%d.%m.%Y') }}
+        {% endif %}
+      </div>
+    </div>
+    <a class="side-panel-close"
+       href="{{ url_for('ekstre.index') }}?fabrika={{ sel_fabrika | urlencode }}{% if sel_hesap %}&hesap={{ sel_hesap | urlencode }}{% endif %}"
+       title="Kapat">✕</a>
+  </div>
+
+  <div class="side-panel-body">
+    {% if compare.error %}
+    <div class="alert error">Karşılaştırma yapılamadı: {{ compare.error }}</div>
+    {% elif compare.rows %}
+
+    {% if sel_hesap %}
+    <div class="alert warning" style="margin-bottom:14px;font-size:12px;">
+      Seçili cari hesap filtresi uygulanıyor. Fabrika geneli için cari hesabı temizleyin.
+    </div>
+    {% endif %}
+
+    <div class="summary-row">
+      <span class="summary-pill all">Toplam <strong>{{ compare.summary.toplam }}</strong></span>
+      <span class="summary-pill green"><span class="dot"></span>Eşleşti <strong>{{ compare.summary.eslesti }}</strong></span>
+      <span class="summary-pill yellow"><span class="dot"></span>Fark <strong>{{ compare.summary.tutar_farki + compare.summary.tarih_farki }}</strong></span>
+      <span class="summary-pill red"><span class="dot"></span>Ekstrede Yok <strong>{{ compare.summary.ekstrede_yok }}</strong></span>
+      <span class="summary-pill red"><span class="dot"></span>Faturada Yok <strong>{{ compare.summary.faturada_yok }}</strong></span>
+    </div>
+
+    <div class="filter-tabs" id="compareFilterTabs" style="margin-bottom:14px;">
+      <button class="filter-tab active" data-filter="all">Tümü</button>
+      <button class="filter-tab tab-eslesti" data-filter="Eşleşti">✅ Eşleşti</button>
+      <button class="filter-tab tab-yok" data-filter="Fark">⚠️ Fark</button>
+      <button class="filter-tab tab-bulunamadi" data-filter="Ekstrede Yok">❌ Ekstrede Yok</button>
+      <button class="filter-tab tab-bulunamadi" data-filter="Faturada Yok">❌ Faturada Yok</button>
+    </div>
+
+    <div class="table-wrap">
+      <table id="compareTable">
+        <thead>
+          <tr>
+            <th>Durum</th>
+            <th>Ekstre Fiş No</th>
+            <th>Ekstre Tarih</th>
+            <th class="num">Ekstre Tutar</th>
+            <th>Gelen Fatura No</th>
+            <th>Fatura Tarih</th>
+            <th class="num">Fatura Tutar</th>
+            <th class="num">Fark</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for r in compare.rows %}
+        {% set is_match = r.durum == 'Eşleşti' %}
+        {% set is_missing_stmt = r.durum == 'Ekstrede Yok' %}
+        {% set is_missing_inv = r.durum == 'Faturada Yok' %}
+        {% set is_diff = not is_match and not is_missing_stmt and not is_missing_inv %}
+        <tr class="{{ 'row-eslesti' if is_match else ('row-bulunamadi' if is_missing_stmt or is_missing_inv else 'row-yok') }}"
+            data-durum="{{ r.durum }}"
+            data-filter-group="{{ 'Fark' if is_diff else r.durum }}">
+          <td><span class="badge {{ 'eslesti' if is_match else ('bulunamadi' if is_missing_stmt or is_missing_inv else 'yok') }}">{{ r.durum }}</span></td>
+          <td><code style="font-size:11px;">{{ r.fis_no or '—' }}</code></td>
+          <td style="font-size:12px;white-space:nowrap;">{{ r.ekstre_tarih.strftime('%d.%m.%Y') if r.ekstre_tarih else '—' }}</td>
+          <td class="num">{{ r.ekstre_tutar | format_tl if r.ekstre_tutar else '—' }}</td>
+          <td style="font-weight:500;">
+            {% if r.invoice_id %}
+              <a href="{{ url_for('invoice_incoming_detail', invoice_id=r.invoice_id) }}"
+                 style="color:var(--primary);text-decoration:none;">
+                <code style="font-size:11px;color:inherit;">{{ r.invoice_id }}</code>
+              </a>
+            {% else %}—{% endif %}
+          </td>
+          <td style="font-size:12px;white-space:nowrap;">{{ r.fatura_tarih.strftime('%d.%m.%Y') if r.fatura_tarih else '—' }}</td>
+          <td class="num">{{ r.fatura_tutar | format_tl if r.fatura_tutar else '—' }}</td>
+          <td class="num" style="{% if r.tutar_fark and r.tutar_fark != 0 %}color:var(--danger);font-weight:600;{% endif %}">
+            {% if r.tutar_fark is not none %}{{ r.tutar_fark | format_tl }}{% else %}—{% endif %}
+            {% if r.tarih_fark_gun and r.tarih_fark_gun != 0 %}
+              <span style="display:block;font-size:10px;color:var(--warning);">{{ r.tarih_fark_gun }} gün</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <p style="font-size:11px;color:var(--text-3);margin-top:14px;line-height:1.5;">
+      Eşleştirme: ekstre <code>fis_no</code> = gelen fatura <code>invoice_id</code>.
+      Yalnızca fatura fiş türleri karşılaştırılır. Tutar toleransı: ±0,01 TL.
+    </p>
+
+    {% else %}
+    <div style="text-align:center;padding:40px 16px;color:var(--text-3);">
+      Karşılaştırılacak fatura satırı bulunamadı.
+    </div>
+    {% endif %}
+  </div>
+</aside>
+
+<script>
+(function () {
+  var closeUrl = "{{ url_for('ekstre.index') }}?fabrika={{ sel_fabrika | urlencode }}{% if sel_hesap %}&hesap={{ sel_hesap | urlencode }}{% endif %}";
+  var overlay = document.getElementById('compareOverlay');
+  if (overlay) overlay.addEventListener('click', function () { window.location.href = closeUrl; });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') window.location.href = closeUrl;
+  });
+  var tabs = document.querySelectorAll('#compareFilterTabs .filter-tab');
+  var rows = document.querySelectorAll('#compareTable tbody tr');
+  tabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      tabs.forEach(function (t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      var f = tab.dataset.filter;
+      rows.forEach(function (row) {
+        var g = row.dataset.filterGroup;
+        var d = row.dataset.durum;
+        row.style.display = (f === 'all' || g === f || d === f) ? '' : 'none';
+      });
+    });
+  });
+})();
+</script>
+{% endif %}
+
 {% endif %}{# tables_exist #}
 {% endblock %}
 """
@@ -376,7 +752,21 @@ _TEMPLATE = """
 def index():
     tables_ok = _tables_exist()
     sel_fabrika = request.args.get("fabrika", "")
-    sel_hesap   = request.args.get("hesap", "")
+    sel_hesap = request.args.get("hesap", "")
+    show_compare = request.args.get("compare") == "1" and bool(sel_fabrika)
+
+    compare_result = None
+    live_balance = None
+    if sel_fabrika and tables_ok:
+        compare_result = compare_ekstre_with_incoming(
+            fabrika=sel_fabrika,
+            cari_hesap_kodu=sel_hesap or None,
+        )
+        live_balance = compute_live_balance(
+            fabrika=sel_fabrika,
+            cari_hesap_kodu=sel_hesap or None,
+        )
+
     return render_template_string(
         _TEMPLATE,
         tables_exist=tables_ok,
@@ -386,6 +776,9 @@ def index():
         hesaplar=_load_hesaplar(sel_fabrika) if (tables_ok and sel_fabrika) else [],
         sel_fabrika=sel_fabrika,
         sel_hesap=sel_hesap,
+        show_compare=show_compare,
+        compare=compare_result,
+        live_balance=live_balance,
     )
 
 
@@ -405,6 +798,7 @@ def upload():
 
     original_name = pdf_file.filename
     tmp_path: Optional[Path] = None
+    parsed_fabrika: Optional[str] = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             pdf_file.save(tmp)
@@ -438,15 +832,16 @@ def upload():
         if result.warnings:
             msg += f" | {len(result.warnings)} uyarı var."
         flash(msg, "success")
+        parsed_fabrika = result.fabrika
 
     finally:
         if tmp_path and tmp_path.exists():
             tmp_path.unlink()
 
+    if parsed_fabrika:
+        return redirect(url_for("ekstre.index", fabrika=parsed_fabrika, compare=1))
     return redirect(url_for("ekstre.index"))
 
-
-# ── Kayıt yardımcısı ──────────────────────────────────────────────────────────
 
 def register_ekstre_routes(app: Flask) -> None:
     app.register_blueprint(ekstre_bp)
