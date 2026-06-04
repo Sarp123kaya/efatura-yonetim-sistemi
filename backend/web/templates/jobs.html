@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}İşler — E-Fatura Panel{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>İş Geçmişi</h1>
+        <p>Tüm çalıştırılmış ve bekleyen işler</p>
+    </div>
+    <a class="button secondary sm" href="{{ url_for('dashboard') }}">← Ana Sayfa</a>
+</div>
+
+<div class="card">
+    <div class="card-body no-pad">
+        {% include "_jobs_table.html" %}
+    </div>
+</div>
+{% endblock %}

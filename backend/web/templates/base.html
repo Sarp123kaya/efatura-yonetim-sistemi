@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="tr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}E-Fatura Web Panel{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    {% block head %}{% endblock %}
+    <script>
+        (function () {
+            var s = localStorage.getItem('theme');
+            var d = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (s === 'dark' || (!s && d)) document.documentElement.setAttribute('data-theme', 'dark');
+            else if (s === 'light')         document.documentElement.setAttribute('data-theme', 'light');
+        })();
+    </script>
+</head>
+<body>
+<header class="topbar">
+    {% set ep = request.endpoint %}
+    <a class="brand {{ 'active' if ep == 'dashboard' else '' }}" href="{{ url_for('dashboard') }}" title="Ana Sayfa">
+        <span class="brand-icon">🏠</span>
+    </a>
+
+    {% if session.get("user") %}
+    <div class="topbar-sep"></div>
+    <nav class="nav-main">
+        <a href="{{ url_for('stats') }}" class="{{ 'active' if ep == 'stats' else '' }}">
+            <span>📊</span><span>İstatistikler</span>
+        </a>
+        <a href="{{ url_for('customers') }}" class="{{ 'active' if ep in ('customers', 'customer_detail') else '' }}">
+            <span>👥</span><span>Müşteriler</span>
+        </a>
+        <a href="{{ url_for('cekler.index') }}" class="{{ 'active' if ep and ep.startswith('cekler') else '' }}">
+            <span>💳</span><span>Çekler</span>
+        </a>
+        <a href="{{ url_for('ekstre.index') }}" class="{{ 'active' if ep and ep.startswith('ekstre') else '' }}">
+            <span>📄</span><span>Ekstre</span>
+        </a>
+    </nav>
+
+    <div class="topbar-spacer"></div>
+
+    <nav class="nav-tools">
+        <a href="{{ url_for('jobs') }}" class="{{ 'active' if ep in ('jobs', 'job_detail') else '' }}">
+            <span>⚙️</span><span>İşler</span>
+        </a>
+        <a href="{{ url_for('reports') }}" class="{{ 'active' if ep == 'reports' else '' }}">
+            <span>📁</span><span>Raporlar</span>
+        </a>
+        <a href="{{ url_for('irsaliye.index') }}" class="{{ 'active' if ep and ep.startswith('irsaliye') else '' }}">
+            <span>🔧</span><span>İrsaliye Düzelt</span>
+        </a>
+        <a href="{{ url_for('alis_fatura.index') }}" class="{{ 'active' if ep == 'alis_fatura.index' or (ep and ep.startswith('purchase_import')) else '' }}">
+            <span>🏭</span><span>Alış Faturası</span>
+        </a>
+    </nav>
+    {% endif %}
+
+    <div class="topbar-right">
+        <button class="theme-toggle" id="themeToggle" aria-label="Tema değiştir" title="Tema değiştir">🌙</button>
+        {% if session.get("user") %}
+        <form method="post" action="{{ url_for('logout') }}" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token') }}">
+            <button type="submit" class="link-button">Çıkış</button>
+        </form>
+        {% endif %}
+    </div>
+</header>
+
+<main class="container">
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+        <div class="alert {{ category }}" role="alert">{{ message }}</div>
+    {% endfor %}
+    {% block content %}{% endblock %}
+</main>
+
+<script>
+// ── Dark mode toggle ──
+var toggle = document.getElementById('themeToggle');
+function applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    toggle.textContent = t === 'dark' ? '☀️' : '🌙';
+}
+applyTheme(document.documentElement.getAttribute('data-theme') || 'light');
+toggle.addEventListener('click', function () {
+    var cur = document.documentElement.getAttribute('data-theme');
+    var next = cur === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    localStorage.setItem('theme', next);
+});
+
+// ── Auto-dismiss alerts after 5s ──
+document.querySelectorAll('.alert').forEach(function (el) {
+    setTimeout(function () {
+        el.classList.add('dismissing');
+        setTimeout(function () { el.remove(); }, 450);
+    }, 5000);
+});
+</script>
+</body>
+</html>

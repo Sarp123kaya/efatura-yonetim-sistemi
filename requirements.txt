@@ -1,9 +1,8 @@
 # E-Fatura Yönetim Sistemi - Gerekli Paketler
 
-# Web Dashboard (opsiyonel)
-# Not: Bu repoda şu an Flask/Django kullanan bir modül yok. İleride web arayüzü eklenirse kullanılabilir.
+# Web Dashboard
 Flask>=3.0.0
-Django>=4.2.0
+gunicorn>=21.2.0
 
 # Excel İşlemleri
 openpyxl>=3.1.0
@@ -13,14 +12,19 @@ xlsxwriter>=3.1.0
 # API ve Web İstekleri
 requests>=2.31.0
 
-# PostgreSQL (opsiyonel - paralel write path)
-# NOT: Proje SQLite + Excel akışı için Postgres'a ihtiyaç duymaz.
-# Postgres'a yazmak isterseniz şu paketi ayrıca kurun:
-#   psycopg[binary]>=3.1.0
+# PostgreSQL (stateful ingestion için gerekli)
+# Backend agents için psycopg2-binary gerekli
+psycopg2-binary>=2.9.0
+# Çekler modülü için psycopg v3 (binary sürüm)
+psycopg[binary]>=3.1.0
+
+# Çekler — PDF ve OCR desteği
+# Not: python-dateutil ayrı listelenmez; pandas zaten alt bağımlılık olarak getirir.
+pdfplumber>=0.10.0
+pydantic>=2.0.0
 
 # Veri İşleme
-# Not: Parser'lar şu an standart kütüphane `xml.etree.ElementTree` kullanıyor; lxml opsiyoneldir.
-lxml>=4.9.0
+# Not: Parser'lar standart kütüphane `xml.etree.ElementTree` kullanır; lxml gerekmez.
 
 # Güvenlik (şifre girişi)
 # (getpass standart kütüphanede mevcut)

@@ -1,0 +1,37 @@
+{% if jobs %}
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Durum</th>
+            <th>İşlem</th>
+            <th>Tarih</th>
+            <th>Dosya</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for job in jobs %}
+        <tr>
+            <td>
+                <span class="badge {{ job.status }}">
+                    {% if job.status == 'pending' %}Beklemede
+                    {% elif job.status == 'running' %}Çalışıyor
+                    {% elif job.status == 'success' %}Tamamlandı
+                    {% elif job.status == 'failed' %}Hata
+                    {% else %}{{ job.status }}{% endif %}
+                </span>
+            </td>
+            <td><a href="{{ url_for('job_detail', job_id=job.id) }}" style="font-weight:500;">{{ actions.get(job.type).label if actions.get(job.type) else job.type }}</a></td>
+            <td class="muted-cell" style="white-space:nowrap;">{{ (job.started_at or job.created_at) | format_dt }}</td>
+            <td class="muted-cell">{{ job.created_files | length }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div style="text-align:center;padding:40px 16px;color:var(--text-3);">
+    <div style="font-size:32px;margin-bottom:10px;">📭</div>
+    <p style="color:var(--text-3);">Henüz iş yok.</p>
+</div>
+{% endif %}

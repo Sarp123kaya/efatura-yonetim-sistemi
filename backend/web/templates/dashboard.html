@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block title %}Ana Sayfa — E-Fatura Panel{% endblock %}
+{% block content %}
+
+<!-- ── Page Header ── -->
+<div class="page-header">
+    <div>
+        <h1>Operasyon Paneli</h1>
+        <p>Fatura verileri, eşleştirme durumu ve iş yönetimi</p>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <a class="button secondary sm" href="{{ url_for('reports') }}">📁 Raporlar</a>
+        <a class="button secondary sm" href="{{ url_for('jobs') }}">⚙️ Tüm İşler</a>
+    </div>
+</div>
+
+<!-- ── Metric Cards ── -->
+<div class="stats-grid">
+    <div class="metric-card accent-blue">
+        <div class="metric-top">
+            <div class="metric-icon blue">📄</div>
+        </div>
+        <div class="metric-value">{{ stats.incoming_count }}</div>
+        <div class="metric-label">Gelen Fatura</div>
+    </div>
+    <div class="metric-card accent-blue">
+        <div class="metric-top">
+            <div class="metric-icon blue">📤</div>
+        </div>
+        <div class="metric-value">{{ stats.outgoing_count }}</div>
+        <div class="metric-label">Giden Fatura</div>
+    </div>
+</div>
+
+{% if stats.last_error %}
+<div class="alert error">⛔ Son hata: {{ stats.last_error }}</div>
+{% endif %}
+
+<!-- ── Eşleştirme Tablosu ── -->
+<div class="card">
+    <div class="card-header">
+        <div>
+            <h2 style="margin-bottom:2px;">Gelen İrsaliye / Giden Fatura Eşleştirmesi</h2>
+            <span style="font-size:12px;color:var(--text-3);">
+                {% if matching.cached_at %}
+                    <span>Son güncelleme: {{ matching.cached_at | format_dt }} — 10 dakikada bir otomatik yenilenir</span>
+                    <span style="margin:0 6px;">·</span>
+                    <span>En son fatura tarihi: {{ matching.last_invoice_date | format_dt if matching.last_invoice_date else '—' }}</span>
+                    <span style="margin:0 6px;">·</span>
+                    <span>En son API çekişi: {{ matching.last_api_fetch | format_dt if matching.last_api_fetch else '—' }}</span>
+                {% else %}
+                    Yükleniyor…
+                {% endif %}
+            </span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+            <form method="post" action="{{ url_for('refresh_matching') }}" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token') }}">
+                <button type="submit" class="button secondary sm">🔄 Yenile</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card-body">
+        {% if matching.error %}
+        <div class="alert warning" style="margin-bottom:14px;">
+            ⚠️ Eşleştirme verisi yüklenirken hata: <code>{{ matching.error }}</code>
+        </div>
+        {% endif %}
+
+        {% if matching.rows %}
+        <!-- Summary pills -->
+        <div class="summary-row">
+            <span class="summary-pill all">Toplam <strong>{{ matching.summary.toplam }}</strong></span>
+            <span class="summary-pill green"><span class="dot"></span>Eşleşti <strong>{{ matching.summary.eslesti }}</strong></span>
+            <span class="summary-pill red"><span class="dot"></span>Bulunamadı <strong>{{ matching.summary.bulunamadi }}</strong></span>
+            <span class="summary-pill yellow"><span class="dot"></span>İrsaliye kodu yok <strong>{{ matching.summary.kod_yok }}</strong></span>
+        </div>
+
+        <!-- Filter tabs -->
+        <div class="filter-tabs" id="matchFilterTabs" style="margin-bottom:14px;">
+            <button class="filter-tab active" data-filter="all">Tümü</button>
+            <button class="filter-tab tab-eslesti"    data-filter="Eşleşti">✅ Eşleşti</button>
+            <button class="filter-tab tab-bulunamadi" data-filter="Bulunamadı">❌ Bulunamadı</button>
+            <button class="filter-tab tab-yok"        data-filter="İrsaliye kodu yok">⚠️ Kodu Yok</button>
+        </div>
+
+        <div class="table-wrap" style="max-height:520px;overflow-y:auto;">
+            <table id="matchTable">
+                <thead>
+                    <tr>
+                        <th>Tarih</th>
+                        <th>Giden Fatura No</th>
+                        <th>Müşteri</th>
+                        <th class="num">Giden Tutar</th>
+                        <th>İrsaliye Kodu</th>
+                        <th>Gelen Tedarikçi</th>
+                        <th class="num">Gelen Tutar</th>
+                        <th class="num">Fark</th>
+                        <th>Gittiği Yer</th>
+                        <th>Durum</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for row in matching.rows %}
+                {% set durum = row['Durum'] %}
+                <tr class="{{ 'row-eslesti' if durum == 'Eşleşti' else ('row-bulunamadi' if durum == 'Bulunamadı' else 'row-yok') }}"
+                    data-durum="{{ durum }}">
+                    <td class="muted-cell" style="white-space:nowrap;">{{ row['Tarih'] }}</td>
+                    <td style="font-weight:500;">
+                        {% if row['outgoing_invoice_id'] %}
+                            <a href="{{ url_for('invoice_outgoing_detail', invoice_id=row['outgoing_invoice_id']) }}"
+                               style="color:var(--primary);text-decoration:none;"
+                               onmouseover="this.style.textDecoration='underline'"
+                               onmouseout="this.style.textDecoration='none'">{{ row['Giden Fatura No'] }}</a>
+                        {% else %}
+                            {{ row['Giden Fatura No'] }}
+                        {% endif %}
+                    </td>
+                    <td class="muted-cell">{{ row['Giden Firma'] }}</td>
+                    <td class="num">{{ row['Giden Tutar (TL)'] | format_tl }}</td>
+                    <td>
+                        {% if row['İrsaliye Kodu'] %}
+                            {% if row['Gelen Fatura ID'] %}
+                                <a href="{{ url_for('invoice_incoming_detail', invoice_id=row['Gelen Fatura ID']) }}"
+                                   style="color:var(--primary);text-decoration:none;"
+                                   onmouseover="this.style.textDecoration='underline'"
+                                   onmouseout="this.style.textDecoration='none'">
+                                    <code style="font-size:12px;color:inherit;">{{ row['İrsaliye Kodu'] }}</code>
+                                </a>
+                            {% else %}
+                                <code style="font-size:12px;">{{ row['İrsaliye Kodu'] }}</code>
+                            {% endif %}
+                        {% else %}
+                            <span style="color:var(--text-3);">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="muted-cell">{{ row['Gelen Tedarikçi'] or '—' }}</td>
+                    <td class="num">{{ row['Gelen Tutar (TL)'] | format_tl if row['Gelen Tutar (TL)'] else '—' }}</td>
+                    <td class="num" style="{% if row['Fark (TL)'] and row['Fark (TL)'] != 0 %}color:{{ 'var(--danger)' if row['Fark (TL)'] < 0 else 'var(--success)' }};font-weight:600;{% endif %}">
+                        {{ row['Fark (TL)'] | format_tl if row['Gelen Tutar (TL)'] else '—' }}
+                    </td>
+                    <td class="muted-cell" style="font-size:12px;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="{{ row['Gittiği Yer'] }}">
+                        {{ row['Gittiği Yer'] or '—' }}
+                    </td>
+                    <td>
+                        <span class="badge {{ 'eslesti' if durum == 'Eşleşti' else ('bulunamadi' if durum == 'Bulunamadı' else 'yok') }}">
+                            {{ durum }}
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% else %}
+        <div style="text-align:center;padding:48px 16px;color:var(--text-3);">
+            <div style="font-size:36px;margin-bottom:12px;">📭</div>
+            <p style="color:var(--text-3);">
+                {% if matching.error %}
+                    Veritabanı bağlantısı kurulamadı veya veri bulunamadı.
+                {% else %}
+                    Henüz eşleştirilecek fatura verisi yok.<br>Önce bir "Gelen/Giden Verileri Çek" işi başlatın.
+                {% endif %}
+            </p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ── Alış Faturası Kısayol ── -->
+<div class="card" style="margin-bottom:16px;border-left:3px solid #8b5cf6;">
+  <div class="card-header" style="padding:14px 16px;">
+    <div>
+      <h2 style="margin-bottom:2px;">🏭 AKG / FLL Alış Faturası Oluştur</h2>
+      <span style="font-size:12px;color:var(--text-3);">
+        Kabul edilmiş AK GİPS ve FULLBOARD faturalarını otomatik alış faturasına çevir
+      </span>
+    </div>
+    <a class="button sm" href="{{ url_for('alis_fatura.index') }}"
+       style="background:#8b5cf6;border-color:#7c3aed;text-decoration:none;">
+      Başlat →
+    </a>
+  </div>
+</div>
+
+<!-- ── Yeni Job Başlat ── -->
+<div class="card">
+    <div class="card-header">
+        <h2>Yeni İş Başlat</h2>
+    </div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('start_job') }}" id="jobForm">
+            <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token') }}">
+            <div class="form-grid">
+                <label style="grid-column:span 2;">
+                    İşlem
+                    <select name="action" required id="actionSelect">
+                        {% for action in actions.values() %}
+                            <option value="{{ action.key }}" data-description="{{ action.description }}">{{ action.label }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label>
+                    Başlangıç tarihi
+                    <input type="date" name="start_date">
+                </label>
+                <label>
+                    Bitiş tarihi
+                    <input type="date" name="end_date">
+                </label>
+            </div>
+            <p class="action-hint" id="actionHint"></p>
+
+            <details>
+                <summary>Gelişmiş Seçenekler</summary>
+                <div class="details-body">
+                    <div class="form-grid" style="margin-bottom:14px;">
+                        <label>
+                            Çıktı klasörü
+                            <input type="text" name="output_dir" value="kayıtlar">
+                        </label>
+                        <label>
+                            E-irsaliye PDF klasörü
+                            <input type="text" name="despatch_description_pdf" value="data/incoming_despatch_pdfs">
+                        </label>
+                        <label>
+                            İşbaşı şifresi
+                            <input type="password" name="api_password" autocomplete="off" placeholder="Sadece API çeken işler için">
+                        </label>
+                    </div>
+                    <p style="font-size:12.5px;color:var(--text-3);margin-bottom:12px;">
+                        Şifre <code>.env</code> içindeyse buraya girmenize gerek yok. Worker şifreyi kullandıktan sonra kayıttan siler.
+                    </p>
+                    <div class="checks">
+                        <label><input type="checkbox" name="refresh_xml"> XML cache yenile</label>
+                        <label><input type="checkbox" name="refresh_despatch_descriptions"> İrsaliye açıklama cache yenile</label>
+                        <label><input type="checkbox" name="skip_ingest"> API çekmeden mevcut DB ile çalış</label>
+                        <label><input type="checkbox" name="all_excel"> Ek Excel paketlerini üret</label>
+                        <label><input type="checkbox" name="skip_reverse"> Ters eşleştirmeyi atla</label>
+                        <label><input type="checkbox" name="skip_despatches"> Gelen e-irsaliye raporunu atla</label>
+                        <label><input type="checkbox" name="confirm"> Kalıcı/veri güncelleyen işlem için onay</label>
+                    </div>
+                </div>
+            </details>
+
+            <div style="margin-top:18px;">
+                <button type="submit">▶ İşi Başlat</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+// ── Action description hint ──
+(function () {
+    var sel = document.getElementById('actionSelect');
+    var hint = document.getElementById('actionHint');
+    function update() {
+        var opt = sel.options[sel.selectedIndex];
+        hint.textContent = opt ? (opt.dataset.description || '') : '';
+    }
+    sel.addEventListener('change', update);
+    update();
+})();
+
+// ── Matching table filter ──
+(function () {
+    var tabs = document.querySelectorAll('#matchFilterTabs .filter-tab');
+    var rows = document.querySelectorAll('#matchTable tbody tr');
+    tabs.forEach(function (tab) {
+        tab.addEventListener('click', function () {
+            tabs.forEach(function (t) { t.classList.remove('active'); });
+            tab.classList.add('active');
+            var f = tab.dataset.filter;
+            rows.forEach(function (row) {
+                if (f === 'all' || row.dataset.durum === f) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        });
+    });
+})();
+</script>
+{% endblock %}

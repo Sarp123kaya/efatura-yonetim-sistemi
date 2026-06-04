@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}İş Detayı — E-Fatura Panel{% endblock %}
+{% block head %}{% if job.status == 'running' %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>{{ actions.get(job.type).label if actions.get(job.type) else job.type }}</h1>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+            <span class="badge {{ job.status }}">
+                {% if job.status == 'pending' %}Beklemede
+                {% elif job.status == 'running' %}⚙️ Çalışıyor
+                {% elif job.status == 'success' %}✅ Tamamlandı
+                {% elif job.status == 'failed' %}❌ Hata
+                {% else %}{{ job.status }}{% endif %}
+            </span>
+            <span style="font-size:12px;color:var(--text-3);">{{ job.id }}</span>
+        </div>
+    </div>
+    <a class="button secondary sm" href="{{ url_for('jobs') }}">← Tüm İşler</a>
+</div>
+
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header"><h3>İş Bilgileri</h3></div>
+    <div class="card-body">
+        <dl class="meta">
+            <dt>Oluşturan</dt><dd>{{ job.created_by or "—" }}</dd>
+            <dt>Oluşturma</dt><dd>{{ job.created_at | format_dt }}</dd>
+            <dt>Başlangıç</dt><dd>{{ job.started_at | format_dt }}</dd>
+            <dt>Bitiş</dt>    <dd>{{ job.finished_at | format_dt }}</dd>
+            {% if job.error_message %}
+            <dt>Hata</dt>     <dd style="color:var(--danger);">{{ job.error_message }}</dd>
+            {% endif %}
+        </dl>
+    </div>
+</div>
+
+{% if job.created_files %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header"><h3>📁 Oluşturulan Dosyalar</h3></div>
+    <div class="card-body">
+        <ul style="list-style:none;display:flex;flex-direction:column;gap:8px;">
+            {% for file in job.created_files %}
+            <li>
+                <a class="button secondary sm" href="{{ url_for('download', relative_path=file) }}">⬇️ {{ file }}</a>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header">
+        <h3>📋 Log</h3>
+        {% if job.status == 'running' %}
+        <span style="font-size:12px;color:var(--warning);">⏳ Sayfa 5 saniyede bir otomatik yenileniyor…</span>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        <pre class="log" id="logPanel">{{ job.log_text or "Job henüz log üretmedi." }}</pre>
+    </div>
+</div>
+
+<script>
+var lp = document.getElementById('logPanel');
+if (lp) lp.scrollTop = lp.scrollHeight;
+</script>
+{% endblock %}

@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+{% block title %}İstatistikler — E-Fatura Panel{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>İstatistikler</h1>
+        <p>Günlük, haftalık ve aylık fatura özetleri</p>
+    </div>
+</div>
+
+<!-- ── Period Tabs ── -->
+<div class="filter-tabs" id="periodTabs" style="margin-bottom:20px;">
+    <button class="filter-tab active" data-period="daily">Günlük</button>
+    <button class="filter-tab" data-period="weekly">Haftalık</button>
+    <button class="filter-tab" data-period="monthly">Aylık</button>
+</div>
+
+<!-- ── Daily ── -->
+<div class="period-panel" id="panel-daily">
+
+    <!-- Giden -->
+    <div class="card" style="margin-bottom:16px;">
+        <div class="card-header">
+            <h2>📤 Giden Fatura — Son 30 Gün</h2>
+        </div>
+        <div class="card-body">
+            {% if outgoing_daily %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Tarih</th>
+                            <th class="num">Adet</th>
+                            <th class="num">Toplam Tutar</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for row in outgoing_daily %}
+                        <tr>
+                            <td class="muted-cell">{{ row.gun }}</td>
+                            <td class="num">{{ row.adet }}</td>
+                            <td class="num">{{ row.toplam | format_tl }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr style="font-weight:600;border-top:2px solid var(--border);">
+                            <td>Toplam</td>
+                            <td class="num">{{ outgoing_daily | sum(attribute='adet') }}</td>
+                            <td class="num">{{ outgoing_daily | sum(attribute='toplam') | format_tl }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            {% else %}
+            <div style="text-align:center;padding:32px 16px;color:var(--text-3);">
+                <p>Son 30 günde giden fatura bulunamadı.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Gelen — tedarikçi bazlı -->
+    <h3 style="margin:8px 0 12px;font-size:.95rem;color:var(--text-2);">📄 Gelen Fatura — Son 30 Gün</h3>
+    {% if incoming_daily_by_supplier %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+        {% for supplier, rows in incoming_daily_by_supplier.items() %}
+        <div class="card">
+            <div class="card-header">
+                <h2 style="font-size:.9rem;" title="{{ supplier }}">{{ supplier | truncate(35, True) }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Tarih</th>
+                                <th class="num">Adet</th>
+                                <th class="num">Toplam Tutar</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for row in rows %}
+                            <tr>
+                                <td class="muted-cell">{{ row.gun }}</td>
+                                <td class="num">{{ row.adet }}</td>
+                                <td class="num">{{ row.toplam | format_tl }}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                        <tfoot>
+                            <tr style="font-weight:600;border-top:2px solid var(--border);">
+                                <td>Toplam</td>
+                                <td class="num">{{ rows | sum(attribute='adet') }}</td>
+                                <td class="num">{{ rows | sum(attribute='toplam') | format_tl }}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div style="text-align:center;padding:32px 16px;color:var(--text-3);">
+        <p>Son 30 günde gelen fatura bulunamadı.</p>
+    </div>
+    {% endif %}
+
+</div>
+
+<!-- ── Weekly ── -->
+<div class="period-panel" id="panel-weekly" style="display:none;">
+
+    <!-- Giden -->
+    <div class="card" style="margin-bottom:16px;">
+        <div class="card-header">
+            <h2>📤 Giden Fatura — Son 12 Hafta</h2>
+        </div>
+        <div class="card-body">
+            {% if outgoing_weekly %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Hafta Başlangıcı</th>
+                            <th class="num">Adet</th>
+                            <th class="num">Toplam Tutar</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for row in outgoing_weekly %}
+                        <tr>
+                            <td class="muted-cell">{{ row.hafta_baslangic }}</td>
+                            <td class="num">{{ row.adet }}</td>
+                            <td class="num">{{ row.toplam | format_tl }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr style="font-weight:600;border-top:2px solid var(--border);">
+                            <td>Toplam</td>
+                            <td class="num">{{ outgoing_weekly | sum(attribute='adet') }}</td>
+                            <td class="num">{{ outgoing_weekly | sum(attribute='toplam') | format_tl }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            {% else %}
+            <div style="text-align:center;padding:32px 16px;color:var(--text-3);">
+                <p>Son 12 haftada giden fatura bulunamadı.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Gelen — tedarikçi bazlı -->
+    <h3 style="margin:8px 0 12px;font-size:.95rem;color:var(--text-2);">📄 Gelen Fatura — Son 12 Hafta</h3>
+    {% if incoming_weekly_by_supplier %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+        {% for supplier, rows in incoming_weekly_by_supplier.items() %}
+        <div class="card">
+            <div class="card-header">
+                <h2 style="font-size:.9rem;" title="{{ supplier }}">{{ supplier | truncate(35, True) }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Hafta Başlangıcı</th>
+                                <th class="num">Adet</th>
+                                <th class="num">Toplam Tutar</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for row in rows %}
+                            <tr>
+                                <td class="muted-cell">{{ row.hafta_baslangic }}</td>
+                                <td class="num">{{ row.adet }}</td>
+                                <td class="num">{{ row.toplam | format_tl }}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                        <tfoot>
+                            <tr style="font-weight:600;border-top:2px solid var(--border);">
+                                <td>Toplam</td>
+                                <td class="num">{{ rows | sum(attribute='adet') }}</td>
+                                <td class="num">{{ rows | sum(attribute='toplam') | format_tl }}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div style="text-align:center;padding:32px 16px;color:var(--text-3);">
+        <p>Son 12 haftada gelen fatura bulunamadı.</p>
+    </div>
+    {% endif %}
+
+</div>
+
+<!-- ── Monthly ── -->
+<div class="period-panel" id="panel-monthly" style="display:none;">
+
+    <!-- Giden -->
+    <div class="card" style="margin-bottom:16px;">
+        <div class="card-header">
+            <h2>📤 Giden Fatura — Son 12 Ay</h2>
+        </div>
+        <div class="card-body">
+            {% if outgoing_monthly %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Ay</th>
+                            <th class="num">Adet</th>
+                            <th class="num">Toplam Tutar</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for row in outgoing_monthly %}
+                        <tr>
+                            <td class="muted-cell">{{ row.ay }}</td>
+                            <td class="num">{{ row.adet }}</td>
+                            <td class="num">{{ row.toplam | format_tl }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr style="font-weight:600;border-top:2px solid var(--border);">
+                            <td>Toplam</td>
+                            <td class="num">{{ outgoing_monthly | sum(attribute='adet') }}</td>
+                            <td class="num">{{ outgoing_monthly | sum(attribute='toplam') | format_tl }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            {% else %}
+            <div style="text-align:center;padding:32px 16px;color:var(--text-3);">
+                <p>Son 12 ayda giden fatura bulunamadı.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Gelen — tedarikçi bazlı -->
+    <h3 style="margin:8px 0 12px;font-size:.95rem;color:var(--text-2);">📄 Gelen Fatura — Son 12 Ay</h3>
+    {% if incoming_monthly_by_supplier %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+        {% for supplier, rows in incoming_monthly_by_supplier.items() %}
+        <div class="card">
+            <div class="card-header">
+                <h2 style="font-size:.9rem;" title="{{ supplier }}">{{ supplier | truncate(35, True) }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Ay</th>
+                                <th class="num">Adet</th>
+                                <th class="num">Toplam Tutar</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for row in rows %}
+                            <tr>
+                                <td class="muted-cell">{{ row.ay }}</td>
+                                <td class="num">{{ row.adet }}</td>
+                                <td class="num">{{ row.toplam | format_tl }}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                        <tfoot>
+                            <tr style="font-weight:600;border-top:2px solid var(--border);">
+                                <td>Toplam</td>
+                                <td class="num">{{ rows | sum(attribute='adet') }}</td>
+                                <td class="num">{{ rows | sum(attribute='toplam') | format_tl }}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div style="text-align:center;padding:32px 16px;color:var(--text-3);">
+        <p>Son 12 ayda gelen fatura bulunamadı.</p>
+    </div>
+    {% endif %}
+
+</div>
+
+<script>
+(function () {
+    var tabs = document.querySelectorAll('#periodTabs .filter-tab');
+    var panels = document.querySelectorAll('.period-panel');
+    tabs.forEach(function (tab) {
+        tab.addEventListener('click', function () {
+            tabs.forEach(function (t) { t.classList.remove('active'); });
+            tab.classList.add('active');
+            var period = tab.dataset.period;
+            panels.forEach(function (panel) {
+                panel.style.display = panel.id === 'panel-' + period ? '' : 'none';
+            });
+        });
+    });
+})();
+</script>
+
+{% endblock %}

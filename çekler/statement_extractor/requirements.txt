@@ -1,0 +1,9 @@
+pdfplumber
+openpyxl
+python-dateutil
+pytest
+pydantic
+watchdog
+pytesseract
+Pillow
+psycopg[binary]

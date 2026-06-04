@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Müşteriler — E-Fatura Panel{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>Müşteriler</h1>
+        <p>Cari bakiye ve fatura özeti</p>
+    </div>
+    <div style="display:flex;gap:8px;">
+        <span class="summary-pill all">Toplam <strong>{{ customers | length }}</strong> müşteri</span>
+    </div>
+</div>
+
+{% if customers %}
+{% set toplam_bakiye = customers | selectattr('balance') | sum(attribute='balance') %}
+{% set toplam_ciro   = customers | sum(attribute='toplam_ciro') %}
+
+<!-- ── Özet kartlar ── -->
+<div class="stats-grid" style="margin-bottom:20px;">
+    <div class="metric-card accent-blue">
+        <div class="metric-top"><div class="metric-icon blue">👥</div></div>
+        <div class="metric-value">{{ customers | length }}</div>
+        <div class="metric-label">Kayıtlı Müşteri</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-top"><div class="metric-icon blue">💰</div></div>
+        <div class="metric-value" style="font-size:18px;">{{ toplam_ciro | format_tl }}</div>
+        <div class="metric-label">2026 Toplam Ciro</div>
+    </div>
+    <div class="metric-card {{ 'accent-green' if toplam_bakiye > 0 else 'accent-red' if toplam_bakiye < 0 else '' }}">
+        <div class="metric-top">
+            <div class="metric-icon {{ 'green' if toplam_bakiye > 0 else 'red' if toplam_bakiye < 0 else 'blue' }}">
+                {{ '↑' if toplam_bakiye > 0 else '↓' if toplam_bakiye < 0 else '—' }}
+            </div>
+        </div>
+        <div class="metric-value" style="font-size:18px;">{{ toplam_bakiye | format_tl }}</div>
+        <div class="metric-label">Toplam Bakiye (API)</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-top"><div class="metric-icon blue">📅</div></div>
+        <div class="metric-value" style="font-size:14px;">
+            {% set with_balance = customers | selectattr('balance_updated_at') | list %}
+            {% if with_balance %}
+                {{ with_balance[0].balance_updated_at | format_dt }}
+            {% else %}—{% endif %}
+        </div>
+        <div class="metric-label">Bakiye Güncelleme</div>
+    </div>
+</div>
+
+<!-- ── Tablo ── -->
+<div class="card">
+    <div class="card-header">
+        <h2>Müşteri Listesi</h2>
+        <span style="font-size:12px;color:var(--text-3);">
+            Bakiye verisi API'den çekildiğinde otomatik güncellenir
+        </span>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <div class="table-wrap">
+            <table id="customerTable">
+                <thead>
+                    <tr>
+                        <th>Müşteri</th>
+                        <th>VKN / TCKN</th>
+                        <th>Şehir</th>
+                        <th class="num">Fatura Adedi</th>
+                        <th class="num">2026 Ciro</th>
+                        <th class="num">Son Fatura</th>
+                        <th class="num">Bakiye (API)</th>
+                        <th class="num">Dönem Başı Bakiye</th>
+                        <th class="num">Gelecek Çek</th>
+                        <th class="num">Gelecek Tutar</th>
+                        <th class="num">Ödenen Tutar</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for c in customers %}
+                {% set has_balance = c.balance is not none %}
+                <tr>
+                    <td style="font-weight:500;">
+                        <a href="{{ url_for('customer_detail', firm_id=c.firm_id) }}"
+                           style="color:var(--primary);text-decoration:none;"
+                           onmouseover="this.style.textDecoration='underline'"
+                           onmouseout="this.style.textDecoration='none'">
+                            {{ c.name }}
+                        </a>
+                    </td>
+                    <td class="muted-cell"><code style="font-size:11px;">{{ c.tax_id or '—' }}</code></td>
+                    <td class="muted-cell">{{ c.city or '—' }}{% if c.district %} / {{ c.district }}{% endif %}</td>
+                    <td class="num">{{ c.fatura_adedi }}</td>
+                    <td class="num">{{ c.toplam_ciro | format_tl }}</td>
+                    <td class="num muted-cell" style="white-space:nowrap;">
+                        {{ c.son_fatura_tarihi | format_dt if c.son_fatura_tarihi else '—' }}
+                    </td>
+                    <td class="num" style="{% if has_balance %}font-weight:600;color:{{ 'var(--success)' if c.balance > 0 else ('var(--danger)' if c.balance < 0 else '') }};{% endif %}">
+                        {% if has_balance %}
+                            {{ c.balance | format_tl }}
+                        {% else %}
+                            <span style="color:var(--text-3);">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="num muted-cell">
+                        {% if c.beginning_balance is not none %}
+                            {{ c.beginning_balance | format_tl }}
+                        {% else %}
+                            <span style="color:var(--text-3);">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="num">
+                        {% if c.cek_adedi %}
+                            <strong>{{ c.cek_adedi }}</strong>
+                        {% else %}
+                            <span style="color:var(--text-3);">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="num">
+                        {% if c.cek_toplam %}
+                            {{ c.cek_toplam | format_tl }}
+                        {% else %}
+                            <span style="color:var(--text-3);">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="num muted-cell">
+                        {% if c.cek_odenen_toplam %}
+                            {{ c.cek_odenen_toplam | format_tl }}
+                        {% else %}
+                            <span style="color:var(--text-3);">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr style="font-weight:700;background:var(--surface-2);">
+                        <td colspan="3" style="padding:8px 12px;">TOPLAM</td>
+                        <td class="num">{{ customers | sum(attribute='fatura_adedi') }}</td>
+                        <td class="num">{{ toplam_ciro | format_tl }}</td>
+                        <td></td>
+                        <td class="num" style="color:{{ 'var(--success)' if toplam_bakiye > 0 else ('var(--danger)' if toplam_bakiye < 0 else '') }};">
+                            {{ toplam_bakiye | format_tl }}
+                        </td>
+                        <td></td>
+                        <td class="num">{{ customers | sum(attribute='cek_adedi') }}</td>
+                        <td class="num">{{ customers | sum(attribute='cek_toplam') | format_tl }}</td>
+                        <td class="num">{{ customers | sum(attribute='cek_odenen_toplam') | format_tl }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<div class="card">
+    <div class="card-body" style="text-align:center;padding:48px 16px;color:var(--text-3);">
+        <div style="font-size:36px;margin-bottom:12px;">👥</div>
+        <p>Henüz müşteri verisi yok.<br>Önce bir fatura çekme işi başlatın — müşteri kartları otomatik oluşturulacak.</p>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

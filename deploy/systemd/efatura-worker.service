@@ -1,0 +1,16 @@
+[Unit]
+Description=E-Fatura Web Worker
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/efatura-panel
+EnvironmentFile=/opt/efatura-panel/.env
+ExecStart=/opt/efatura-panel/.venv/bin/python3 scripts/run_web_worker.py
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target
