@@ -28,7 +28,14 @@ from flask import (
 from backend.core.config import PROJECT_ROOT, config
 from backend.core.db import db
 from backend.web.actions import ACTIONS
-from backend.web.jobs import create_job, dashboard_stats, ensure_web_job_schema, get_job, list_jobs
+from backend.web.jobs import (
+    create_job,
+    dashboard_stats,
+    ensure_web_job_schema,
+    get_job,
+    list_jobs,
+    resolve_job_log_text,
+)
 
 # Ensure scripts/ is on the path (actions.py already does this, but be explicit)
 _scripts_dir = str(PROJECT_ROOT / "scripts")
@@ -278,6 +285,8 @@ def create_app() -> Flask:
         job = get_job(job_id)
         if not job:
             abort(404)
+        job = dict(job)
+        job["log_text"] = resolve_job_log_text(job)
         return render_template("job_detail.html", job=job)
 
     @app.route("/invoice/outgoing/<invoice_id>")

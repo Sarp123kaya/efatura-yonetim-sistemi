@@ -18,7 +18,7 @@ from typing import Iterable
 from backend.core.config import PROJECT_ROOT, config
 from backend.core.db import db
 from backend.web.actions import ACTIONS
-from backend.web.jobs import claim_next_job, mark_failed, mark_success
+from backend.web.jobs import claim_next_job, mark_failed, mark_success, set_job_log_path
 
 LOCK_NAME = "web_invoice_pipeline_exclusive_lock"
 
@@ -105,6 +105,7 @@ def process_one(worker_name: str) -> bool:
     params = job.get("params") or {}
     log_path = _logs_dir() / f"{job_id}.log"
     buffer = io.StringIO()
+    set_job_log_path(job_id, log_path)
 
     try:
         if action_key not in ACTIONS:

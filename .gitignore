@@ -15,20 +15,15 @@ ENV/
 *.db
 *.sqlite
 *.sqlite3
-data/db/*.db
-data/db/backups/
+data/
+!data/.gitkeep
 
 # Excel dosyaları (output)
-data/excel/**/*.xlsx
-kayıtlar/*.xlsx
+kayıtlar/
+!kayıtlar/.gitkeep
 
 # Log dosyaları
 *.log
-data/logs/*.log
-
-# XML dosyaları (hassas veri içerebilir)
-data/xml/
-data/xml/**/*.xml
 
 # Yerel temizlik/yedek arşivi
 local_archive/
@@ -39,6 +34,7 @@ local_archive/
 .LSOverride
 
 # IDE
+.cursor/
 .vscode/
 .idea/
 *.swp
@@ -54,4 +50,3 @@ local_archive/
 .env
 credentials.json
 secrets.txt
-

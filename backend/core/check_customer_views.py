@@ -8,12 +8,33 @@ from decimal import Decimal
 from typing import Any
 
 from backend.core.db import db
+from backend.core.customer_ekstre_comparison import match_musteri_adi_to_firm
 
 
 def _to_decimal(value: Any) -> Decimal:
     if value is None:
         return Decimal("0")
     return Decimal(str(value))
+
+
+def _distinct_check_account_names() -> list[str]:
+    rows = db.query(
+        """
+        SELECT DISTINCT account_name
+        FROM checks
+        WHERE COALESCE(account_name, '') <> ''
+        ORDER BY account_name
+        """
+    )
+    return [str(row.get("account_name") or "").strip() for row in rows if row.get("account_name")]
+
+
+def _matched_check_account_names(customer_name: str) -> list[str]:
+    if not customer_name:
+        return []
+    names = _distinct_check_account_names()
+    matched, _method = match_musteri_adi_to_firm(customer_name, names)
+    return matched or [customer_name]
 
 
 def load_checks_by_customer_name(account_name: str) -> dict[str, Any]:
@@ -31,6 +52,9 @@ def load_checks_by_customer_name(account_name: str) -> dict[str, Any]:
         "odenen_toplam": Decimal("0"),
     }
     try:
+        account_names = _matched_check_account_names(account_name)
+        if not account_names:
+            return empty
         upcoming = db.query(
             """
             SELECT id, check_no, bank_name, amount, currency,
@@ -42,7 +66,7 @@ def load_checks_by_customer_name(account_name: str) -> dict[str, Any]:
                     maturity_date, transaction_date, status, review_status,
                     raw_description
                 FROM checks
-                WHERE account_name = %s
+                WHERE account_name = ANY(%s)
                   AND review_status = 'APPROVED'
                   AND TRIM(check_no) <> ''
                   AND (maturity_date IS NULL OR maturity_date >= %s)
@@ -50,7 +74,7 @@ def load_checks_by_customer_name(account_name: str) -> dict[str, Any]:
             ) u
             ORDER BY maturity_date ASC NULLS LAST, check_no
             """,
-            (account_name, today),
+            (account_names, today),
         )
         agg = db.query_one(
             """
@@ -71,13 +95,13 @@ def load_checks_by_customer_name(account_name: str) -> dict[str, Any]:
                 SELECT DISTINCT ON (TRIM(check_no))
                     amount, maturity_date
                 FROM checks
-                WHERE account_name = %s
+                WHERE account_name = ANY(%s)
                   AND review_status = 'APPROVED'
                   AND TRIM(check_no) <> ''
                 ORDER BY TRIM(check_no), id DESC
             ) u
             """,
-            (today, today, today, today, account_name),
+            (today, today, today, today, account_names),
         )
     except Exception:
         return empty
@@ -137,4 +161,32 @@ def load_check_summaries_for_all_customers() -> dict[str, dict[str, Any]]:
             "odenen_toplam": _to_decimal(row.get("odenen_toplam")),
             "son_vade": row.get("son_vade"),
         }
+    try:
+        firm_rows = db.query("SELECT name FROM firm_cards WHERE COALESCE(name, '') <> ''")
+    except Exception:
+        return out
+
+    account_names = list(out.keys())
+    for firm_row in firm_rows:
+        firm_name = str(firm_row.get("name") or "").strip()
+        if not firm_name or firm_name in out:
+            continue
+        matched, _method = match_musteri_adi_to_firm(firm_name, account_names)
+        if not matched:
+            continue
+        combined = {
+            "gelecek_adedi": 0,
+            "gelecek_toplam": Decimal("0"),
+            "odenen_toplam": Decimal("0"),
+            "son_vade": None,
+        }
+        for matched_name in matched:
+            item = out.get(matched_name) or {}
+            combined["gelecek_adedi"] += int(item.get("gelecek_adedi") or 0)
+            combined["gelecek_toplam"] += _to_decimal(item.get("gelecek_toplam"))
+            combined["odenen_toplam"] += _to_decimal(item.get("odenen_toplam"))
+            son_vade = item.get("son_vade")
+            if son_vade and (combined["son_vade"] is None or son_vade < combined["son_vade"]):
+                combined["son_vade"] = son_vade
+        out[firm_name] = combined
     return out

@@ -138,6 +138,48 @@ def claim_next_job(worker_name: str | None = None) -> dict[str, Any] | None:
             return _row_to_job(claimed)
 
 
+def _job_log_file(job_id: str) -> Path:
+    from backend.core.config import PROJECT_ROOT
+
+    return PROJECT_ROOT / "data" / "logs" / "web_jobs" / f"{job_id}.log"
+
+
+def resolve_job_log_text(job: dict[str, Any] | None) -> str:
+    """Return log text for the UI, including live output while a job is running."""
+    if not job:
+        return ""
+    stored = (job.get("log_text") or "").strip()
+    if stored:
+        return job["log_text"]
+    if job.get("status") != "running":
+        return job.get("log_text") or ""
+
+    log_path = job.get("log_path")
+    path = Path(log_path) if log_path else _job_log_file(str(job["id"]))
+    if not path.is_absolute():
+        from backend.core.config import PROJECT_ROOT
+
+        path = PROJECT_ROOT / path
+    try:
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+    except OSError:
+        pass
+    return ""
+
+
+def set_job_log_path(job_id: str, log_path: Path) -> None:
+    """Persist log file path so the UI can stream output while the job runs."""
+    db.execute(
+        """
+        UPDATE web_jobs
+        SET log_path = %s, updated_at = NOW()
+        WHERE id = %s
+        """,
+        (str(log_path), job_id),
+    )
+
+
 def mark_success(job_id: str, created_files: list[str], log_text: str, log_path: Path | None = None) -> None:
     db.execute(
         """

@@ -66,7 +66,11 @@ SQL_FILES=(
     "sql/migration_irsaliye_override.sql"
     "sql/migration_incoming_xml_cache.sql"
     "sql/migration_outgoing_xml_cache.sql"
+    "sql/migration_incoming_despatch_description_cache.sql"
     "sql/migration_web_jobs.sql"
+    "sql/migration_firm_cards.sql"
+    "sql/migration_factory_kar.sql"
+    "sql/migration_factory_statements.sql"
     "sql/migration_check_pool.sql"
     "sql/migration_customer_check_transfer_audit.sql"
 )
